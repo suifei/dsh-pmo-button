@@ -117,7 +117,7 @@ const checks = [
   ['reviewer verdict sequence', childVerdicts.join(',') === 'STATUS: CONTINUE,STATUS: DONE,STATUS: DONE', childVerdicts.join(',')],
   ['gate intercepts dsh native notices', count('[闸门] 已拦截') >= 4, `n=${count('[闸门] 已拦截')}`],
   ['no native notice reaches any model request', nativeSeen === 0, `requestsWithNative=${nativeSeen}`],
-  ['main session sees only user / runtime-context / pmo-review', mainKinds.every((k) => ['user', 'runtime-context', 'time-context', 'pmo-review'].includes(k)), mainKinds.join(',')],
+  ['main session sees only user / runtime-context / pmo-review (plus harness reminders)', mainKinds.every((k) => ['user', 'runtime-context', 'time-context', 'skill-catalog', 'agent-instructions', 'pmo-review'].includes(k)), mainKinds.join(',')],
   ['main model requests = 5 (no extra step from intercepted notices)', mainRequests === 5 && mainSteps(trace) === 5, `requests=${mainRequests} steps=${mainSteps(trace)}`],
   ['idle parent: intercepted notice closes an empty turn without a step', mainTurns(phases['restart-while-idle']) === 1 && mainSteps(phases['restart-while-idle']) === 0, `turns=${mainTurns(phases['restart-while-idle'])} steps=${mainSteps(phases['restart-while-idle'])}`],
 ]
