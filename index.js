@@ -1,5 +1,5 @@
 /**
- * PMO button — Host half v0.9.0.
+ * PMO button — Host half v0.10.0.
  * Per-session armed set, turn buffers, child registry, and the once-per-session
  * identity-prompt flag are persisted (pmo-state.json), so restarts lose nothing.
  * The `session/event` feed drives two jobs for armed sessions:
@@ -32,6 +32,7 @@ const ROLE_PROMPT_DEFAULT = [
   '- [用户] 用户原话：最高权威，目标和验收标准的唯一来源',
   '- [主代理] 该轮完整答复：待审对象，是自述，不是事实',
   '- [注入] 系统注入：忽略',
+  '- [待命] 循环签到：PMO 重新启动的确认，不是审查请求',
   '',
   '【你的工作】',
   '1. 核实：以工作区的代码、diff、日志、运行结果为准。你只读，不改任何文件。',
@@ -50,6 +51,7 @@ const ROLE_PROMPT_DEFAULT = [
   '  → NEED_HUMAN，写清需要用户决定什么。',
   '- 用户原话之外的改进建议一律不提。',
   '- 通讯纪律：不要使用 send_message 向父代理发送消息；你的结束语会随结算自动回传父会话，无需另发。',
+  '- 签到与审查分离：收到签到（无 [用户] 新指令的 [待命] 消息）时，只回复一句确认并保持待命，禁止输出 STATUS/DONE；只有收到含 [用户] 新指令的转发块时，才按规程输出 STATUS。',
 ].join('\n')
 
 /** @typedef {{ logFile: string, maxChars: number, provider: string, childLabel: string, greet: string, rolePrompt: string }} Config */
@@ -61,8 +63,8 @@ export const Config = Schema.object({
   provider: Schema.string().default('spawn'),
   /** Persistent child label; the child session is reused across PMO starts. */
   childLabel: Schema.string().default('PMO 子代理'),
-  /** Text sent to the child each time PMO starts. */
-  greet: Schema.string().default('hi'),
+  /** Text sent to the child each time PMO starts (a check-in, NOT a review). */
+  greet: Schema.string().default('PMO 循环已启动（签到，非审查请求）：审查官就位，用户的下一轮工作与审查请求将随后续转发块到达。请保持待命；本轮只需回复一句确认，不要输出 STATUS。'),
   /** Identity prompt; delivered exactly once per session (empty disables). */
   rolePrompt: Schema.string().default(ROLE_PROMPT_DEFAULT),
   /** Review-round cap per session since the last user input; 0 disables the cap. */
@@ -330,7 +332,7 @@ export function apply(ctx, config) {
       otherTasks.forEach((t) => parts.push(`[注入:${t.src}] ${t.text}`))
       attachTasks.forEach((t) => parts.push(t.text))
       if (b.texts?.length > 0) parts.push(`[主代理] ${b.texts.join('\n\n---\n\n')}`)
-      const forward = clip(redact(`【PMO 轮次转发 · turn=${turn}】\n` + parts.join('\n')), config.maxChars * 2)
+      const forward = clip(redact(`【PMO 轮次转发 · turn=${turn} · 审查请求】以下为用户本轮新输入（[PMO]/[图片]）与主代理完整答复，请按规程审查并输出 STATUS；若本轮无 [用户] 新指令，仅确认收到即可，不要输出 DONE。\n` + parts.join('\n')), config.maxChars * 2)
       const agents = ctx.get('agents')
       const agent = agents && typeof agents.get === 'function' ? agents.get(sid) : undefined
       const subagentsSvc = ctx.get('subagents')
