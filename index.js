@@ -33,7 +33,7 @@ export const name = 'dsh-pmo-button'
 export const inject = ['webServer']
 /** Host-half version, logged on activation so an operator can tell which build
  *  the running Host actually imported (hot reload vs stale module). */
-const HOST_VERSION = '0.12.0'
+const HOST_VERSION = '0.12.1'
 
 /** The identity prompt; delivered once per session and re-delivered only when its text changes. */
 const ROLE_PROMPT_DEFAULT = [
@@ -368,6 +368,30 @@ export function apply(ctx, config) {
       maxRounds: ov.maxRounds !== undefined && ov.maxRounds !== null ? Number(ov.maxRounds) : config.maxRounds,
     }
   }
+  /**
+   * Resolve the DSH-advertised reasoning efforts for one exact model. The
+   * session menu and config panel must offer the model's own list (qwen:
+   * off/low/medium/high, no max) instead of a hardcoded superset; the
+   * provider's alias mapping (high -> xhigh for qwen) stays inside the adapter.
+   */
+  async function reasoningFor(provider, model) {
+    if (!provider || !model) return null
+    const llm = ctx.get('llm')
+    if (!llm || typeof llm.resolveModelInfo !== 'function') return null
+    try {
+      const info = await llm.resolveModelInfo(provider, model)
+      const r = info && info.reasoning
+      if (!r || !Array.isArray(r.efforts)) return null
+      return {
+        defaultEffort: r.defaultEffort || null,
+        efforts: r.efforts.map((e) => ({
+          id: String(e.id),
+          name: String(e.name || e.id),
+          description: e.description ? String(e.description) : '',
+        })),
+      }
+    } catch { return null }
+  }
   /** Error message with its cause chain (SubagentError wraps the real reason in `cause`). */
   function errText(err) {
     const out = []
@@ -581,7 +605,7 @@ export function apply(ctx, config) {
     }
     saveState()
     const providers = typeof subagents.list === 'function' ? subagents.list().join(',') : '?'
-    append(`${stamp()}  [子代理] 已创建持久子代理「${config.childLabel}」 child=${String(act.childId).slice(0, 12)}… provider=${config.provider} 可用=[${providers}]\n`)
+    append(`${stamp()}  [子代理] 已创建持久子代理「${config.childLabel}」 child=${String(act.childId).slice(0, 12)}… provider=${config.provider} 审查模型=${eff.provider || '继承主会话'}/${eff.model || '继承主会话'}${eff.effort ? ' ' + eff.effort : ''} 可用=[${providers}]\n`)
   }
 
   // ---- Line B: the child's verdict, delivered to the main session by the plugin
@@ -796,7 +820,12 @@ export function apply(ctx, config) {
     }
     if (request.method === 'GET' && rest === '/config') {
       const editor = ctx.get('configEditor')
-      return json({ ok: true, config: { ...config }, editorAvailable: editor !== void 0 })
+      return json({
+        ok: true,
+        config: { ...config },
+        editorAvailable: editor !== void 0,
+        reasoning: await reasoningFor(config.childModelProvider, config.childModel),
+      })
     }
     if (request.method === 'GET' && rest === '/config/save') {
       // Persisted through the configEditor user layer (survives upgrades) and
@@ -816,8 +845,20 @@ export function apply(ctx, config) {
       try { validated = Config({ ...config, ...patch }) } catch (err) {
         return json({ ok: false, error: String((err && err.message) || err) }, 400)
       }
+      // An effort that the selected model does not advertise would be rejected
+      // by resolveCallConfig before provider I/O; clear it instead of persisting
+      // a combination the next review cannot run.
+      let reasoning = await reasoningFor(validated.childModelProvider, validated.childModel)
+      let effortAdjusted = false
+      if (validated.childReasoningEffort && reasoning && reasoning.efforts.length) {
+        const supported = reasoning.efforts.some((e) => e.id === validated.childReasoningEffort)
+        if (!supported) {
+          validated = { ...validated, childReasoningEffort: '' }
+          effortAdjusted = true
+        }
+      }
       await editor.edit(entry, () => ({ ...validated }))
-      return json({ ok: true, config: validated })
+      return json({ ok: true, config: validated, reasoning, effortAdjusted })
     }
     if (request.method === 'GET' && rest === '/models') {
       // The same catalog the composer's model selector consumes: providers ×
@@ -855,11 +896,20 @@ export function apply(ctx, config) {
     }
     if (request.method === 'GET' && rest === '/session-config') {
       const sid = url.searchParams.get('session') ?? 'unknown'
-      return json({ ok: true, sessionId: sid, override: overrides.get(sid) || null })
+      const eff = effectiveFor(sid)
+      return json({
+        ok: true,
+        sessionId: sid,
+        override: overrides.get(sid) || null,
+        effective: eff,
+        reasoning: await reasoningFor(eff.provider, eff.model),
+        enabled: enabled.has(sid) && !stopped.has(sid),
+      })
     }
     if (request.method === 'GET' && rest === '/session-config/set') {
       const sid = url.searchParams.get('session')
       if (!sid || sid === 'unknown') return json({ ok: false, error: 'missing session' }, 400)
+      const before = effectiveFor(sid)
       const cur = { ...(overrides.get(sid) || {}) }
       for (const k of ['provider', 'model', 'effort']) {
         if (url.searchParams.has(k)) {
@@ -874,8 +924,56 @@ export function apply(ctx, config) {
         else delete cur.maxRounds
       }
       overrides.set(sid, cur)
+      let after = effectiveFor(sid)
+      let reasoning = await reasoningFor(after.provider, after.model)
+      let effortAdjusted = false
+      if (cur.effort && reasoning && reasoning.efforts.length) {
+        const supported = reasoning.efforts.some((e) => e.id === cur.effort)
+        if (!supported) {
+          delete cur.effort
+          overrides.set(sid, cur)
+          after = effectiveFor(sid)
+          reasoning = await reasoningFor(after.provider, after.model)
+          effortAdjusted = true
+        }
+      }
+      const beforeFp = JSON.stringify([before.provider, before.model, before.effort])
+      const afterFp = JSON.stringify([after.provider, after.model, after.effort])
+      let reset = false
+      if (beforeFp !== afterFp) {
+        // The child's model/effort is baked into its durable descriptor. Reset it
+        // now, not only on the next toggle: the menu promises immediate effect,
+        // and a stale reviewer must not keep calling the old route (the 401 seen
+        // when qwen was selected but the child still ran deepseek-official).
+        modelFps.set(sid, afterFp)
+        if (children.has(sid)) {
+          childReports.delete(children.get(sid))
+          children.delete(sid)
+          roleSent.delete(sid)
+          reset = true
+          append(`${stamp()}  [子代理] 会话级审查模型/思考等级变更，已重置审查官（新审查模型：${after.provider || '继承主会话'}/${after.model || '继承主会话'}${after.effort ? ' ' + after.effort : ''}；审查记忆清零）\n`)
+          // The forward path needs an existing child (it skips "无活跃子代理");
+          // recreate now when the loop is live so the next turn uses the new
+          // model. When stopped, the next toggle creates it.
+          const live = enabled.has(sid) && !stopped.has(sid)
+          if (live) {
+            const agents = ctx.get('agents')
+            const agent = agents && typeof agents.get === 'function' ? agents.get(sid) : undefined
+            if (agent) {
+              try {
+                await ensureChildAndGreet(sid, agent)
+                append(`${stamp()}  [子代理] 已按新审查模型重建审查官（下一次转发使用它）\n`)
+              } catch (err) {
+                append(`${stamp()}  [子代理] 重置后重建审查官失败: ${errText(err)}（下次点亮时会重新创建）\n`)
+              }
+            } else {
+              append(`${stamp()}  [子代理] 父会话无活跃 Agent，未重建审查官（下次点亮时会创建）\n`)
+            }
+          }
+        }
+      }
       saveState()
-      return json({ ok: true, sessionId: sid, override: cur, effective: effectiveFor(sid) })
+      return json({ ok: true, sessionId: sid, override: cur, effective: after, reasoning, reset, effortAdjusted })
     }
     if (rest === '/toggle') {
       let sid, on

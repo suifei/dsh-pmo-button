@@ -18,7 +18,7 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const h = React.createElement;
     const BASE = '/pmo-button';
-    const VER = 'v0.12.0';
+    const VER = 'v0.12.1';
     const EFFORTS = [
       ['', '继承主会话思考等级'],
       ['minimal', 'minimal（最小）'],
@@ -30,10 +30,10 @@ window.__ModuleLoader__.load({
     let loadError = null;
     let t = {
       start: 'PMO：启动自动化', stop: 'PMO：运行中，点击停止', busy: 'PMO：处理中…', offline: 'PMO：宿主未响应',
-      menuTitle: '会话级审查设置', menuSub: '只影响当前会话；全局默认在 插件 → PMO 按钮 页面配置',
+      menuTitle: '会话级审查设置', menuSub: '只影响当前会话；全局默认在 插件 → PMO 按钮 页面配置；思考等级按所选模型能力列出',
       model: '审查模型', effort: '思考等级', rounds: '轮数上限',
       inheritModel: '继承主会话模型', inheritEffort: '继承主会话思考等级',
-      roundsHint: '留空 = 继承全局', saved: '已保存 ✓（对本会话立即生效）', fail: '保存失败',
+      roundsHint: '留空 = 继承全局', saved: '已保存 ✓', savedReset: '已保存 ✓（审查官已重置，下次审查使用新模型）', fail: '保存失败',
       close: '关闭', menuAria: '会话级审查设置',
     };
 
@@ -208,12 +208,41 @@ window.__ModuleLoader__.load({
       inR.placeholder = t.roundsHint;
       const hintR = el('div', 'pmo-menu-hint', t.roundsHint);
 
+      /** Rebuild the effort select from the model's DSH reasoning catalog. */
+      function renderEfforts(reasoning, current) {
+        const keep = current === undefined ? selE.value : String(current || '');
+        while (selE.firstChild) selE.removeChild(selE.firstChild);
+        const inh = el('option', null, t.inheritEffort);
+        inh.value = '';
+        selE.appendChild(inh);
+        let rows = EFFORTS.filter(function (o) { return o[0]; });
+        if (reasoning && Array.isArray(reasoning.efforts) && reasoning.efforts.length) {
+          rows = reasoning.efforts.map(function (e) {
+            const id = String(e.id || '');
+            const name = String(e.name || id);
+            return [id, (name && name !== id) ? name + '（' + id + '）' : (name || id)];
+          });
+        }
+        for (const row of rows) {
+          const op = el('option', null, row[1]);
+          op.value = row[0];
+          selE.appendChild(op);
+        }
+        const has = Array.prototype.some.call(selE.options, function (o) { return o.value === keep; });
+        if (keep && !has) {
+          const op = el('option', null, keep + '（当前模型不支持）');
+          op.value = keep;
+          selE.appendChild(op);
+        }
+        selE.value = keep;
+      }
+
       m.appendChild(menuRow(t.model, selM));
       m.appendChild(menuRow(t.effort, selE));
       m.appendChild(menuRow(t.rounds, inR, hintR));
       const status = el('div', 'pmo-menu-status');
       m.appendChild(status);
-      m.appendChild(el('div', 'pmo-menu-foot', VER + ' · 会话级覆盖优先于全局，修改后立即生效'));
+      m.appendChild(el('div', 'pmo-menu-foot', VER + ' · 会话级覆盖优先于全局；模型/思考等级变更会重置审查官（记忆清零）'));
       document.body.appendChild(m);
 
       const r = anchor && anchor.getBoundingClientRect
@@ -243,11 +272,23 @@ window.__ModuleLoader__.load({
         q.set('model', i >= 0 ? mv.slice(i + 1) : '');
         q.set('effort', selE.value);
         q.set('maxRounds', inR.value.trim());
+        status.textContent = '保存中…';
+        status.style.color = '';
         fetch(BASE + '/session-config/set?' + q.toString())
           .then(function (res) { return res.json(); })
           .then(function (body) {
-            status.textContent = body && body.ok ? t.saved : t.fail;
-            status.style.color = body && body.ok ? '' : 'var(--dsw-alias-state-error-primary,#e5484d)';
+            if (body && body.ok) {
+              renderEfforts(body.reasoning, body.effective && body.effective.effort);
+              status.textContent = body.reset
+                ? t.savedReset
+                : body.effortAdjusted
+                  ? '已保存 ✓（该思考等级不适用于此模型，已改为继承）'
+                  : t.saved;
+              status.style.color = '';
+            } else {
+              status.textContent = (body && body.error) || t.fail;
+              status.style.color = 'var(--dsw-alias-state-error-primary,#e5484d)';
+            }
           })
           .catch(function () {
             status.textContent = t.fail + '（连接）';
@@ -273,22 +314,14 @@ window.__ModuleLoader__.load({
       fetch(BASE + '/session-config?session=' + encodeURIComponent(sid))
         .then(function (res) { return res.json(); })
         .then(function (body) {
-          if (!body || !body.ok || !body.override) return;
-          const ov = body.override;
+          if (!body || !body.ok) return;
+          const ov = body.override || {};
           if (ov.provider && ov.model) {
             wantCombo = ov.provider + '|' + ov.model;
             selM.value = wantCombo;
           }
-          if (ov.effort) {
-            const hasEffort = Array.prototype.some.call(selE.options, function (o) { return o.value === ov.effort; });
-            if (!hasEffort) {
-              const op = el('option', null, ov.effort);
-              op.value = ov.effort;
-              selE.appendChild(op);
-            }
-            selE.value = ov.effort;
-          }
           if (ov.maxRounds !== undefined) inR.value = String(ov.maxRounds);
+          renderEfforts(body.reasoning, ov.effort || '');
         })
         .catch(function () { });
 
@@ -451,7 +484,7 @@ window.__ModuleLoader__.load({
       }
 
       function ConfigPanel() {
-        const st = React.useState({ loaded: false, cfg: {}, catalog: [], providers: [], msg: '' });
+        const st = React.useState({ loaded: false, cfg: {}, catalog: [], providers: [], reasoning: null, msg: '' });
         const view = st[0];
         const set = st[1];
 
@@ -461,7 +494,7 @@ window.__ModuleLoader__.load({
           fetch(BASE + '/config')
             .then(function (r) { return r.json(); })
             .then(function (body) {
-              if (!dead && body && body.ok) merge({ loaded: true, cfg: body.config || {}, msg: '' });
+              if (!dead && body && body.ok) merge({ loaded: true, cfg: body.config || {}, reasoning: body.reasoning || null, msg: '' });
               else if (!dead) merge({ loaded: true, msg: '配置读取失败' });
             })
             .catch(function () { if (!dead) merge({ loaded: true, msg: '配置读取失败（连接）' }); });
@@ -483,7 +516,13 @@ window.__ModuleLoader__.load({
           fetch(BASE + '/config/save?' + q.toString())
             .then(function (r) { return r.json(); })
             .then(function (body) {
-              if (body && body.ok) set(function (s) { return Object.assign({}, s, { cfg: body.config || s.cfg, msg: '已保存 ✓（热生效）' }); });
+              if (body && body.ok) set(function (s) {
+                return Object.assign({}, s, {
+                  cfg: body.config || s.cfg,
+                  reasoning: body.reasoning || null,
+                  msg: body.effortAdjusted ? '已保存 ✓（思考等级不适用于新模型，已改为继承）' : '已保存 ✓（热生效）',
+                });
+              });
               else set(function (s) { return Object.assign({}, s, { msg: '保存失败：' + ((body && body.error) || '未知') }); });
             })
             .catch(function () { set(function (s) { return Object.assign({}, s, { msg: '保存失败（连接）' }); }); });
@@ -548,9 +587,22 @@ window.__ModuleLoader__.load({
         }
         function effortField() {
           const value = view.cfg && view.cfg.childReasoningEffort ? String(view.cfg.childReasoningEffort) : '';
-          const known = EFFORTS.some(function (o) { return o[0] === value; });
-          const opts = EFFORTS.map(function (o) { return h('option', { value: o[0], key: o[0] || 'inherit' }, o[1]); });
-          if (value && !known) opts.push(h('option', { value: value, key: 'current' }, value));
+          let opts;
+          if (view.reasoning && Array.isArray(view.reasoning.efforts) && view.reasoning.efforts.length) {
+            opts = [h('option', { value: '', key: 'inherit' }, '继承主会话思考等级')];
+            for (const e of view.reasoning.efforts) {
+              const id = String(e.id || '');
+              const name = String(e.name || id);
+              opts.push(h('option', { value: id, key: id }, (name && name !== id) ? name + '（' + id + '）' : (name || id)));
+            }
+            const known = view.reasoning.efforts.some(function (e) { return String(e.id) === value; });
+            if (value && !known) opts.push(h('option', { value: value, key: 'current' }, value + '（当前模型不支持）'));
+          } else {
+            opts = EFFORTS.map(function (o) { return h('option', { value: o[0], key: o[0] || 'inherit' }, o[1]); });
+            if (value && !EFFORTS.some(function (o) { return o[0] === value; })) {
+              opts.push(h('option', { value: value, key: 'current' }, value));
+            }
+          }
           return h('label', { className: 'pmo-cfg-row', key: 'childReasoningEffort' },
             h('span', { className: 'pmo-cfg-label' }, '思考等级'),
             h('select', {
@@ -581,7 +633,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'pmo-cfg-sectitle' }, '审查模型（异构审查：审查方 ≠ 执行方）'),
             modelField(),
             effortField(),
-            h('div', { className: 'pmo-cfg-note' }, '留空 = 继承主会话；修改模型/思考等级后，下次启动会重置审查官（记忆清零）。'),
+            h('div', { className: 'pmo-cfg-note' }, '留空 = 继承主会话；思考等级按所选模型能力列出；修改模型/思考等级后，下次启动会重置审查官（记忆清零）。'),
           ),
           h('div', { className: 'pmo-cfg-section' },
             h('div', { className: 'pmo-cfg-sectitle' }, '运行'),

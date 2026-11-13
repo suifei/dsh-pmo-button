@@ -20,7 +20,7 @@ import { apply } from '../index.js'
 const SID = 'session-test'
 const CHILD = 'child-test'
 
-function harness(state) {
+function harness(state, opts = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pmo-gate-'))
   const logFile = path.join(dir, 'pmo.log')
   if (state) fs.writeFileSync(path.join(dir, 'pmo-state.json'), JSON.stringify(state), 'utf8')
@@ -48,7 +48,7 @@ function harness(state) {
       webServer: { register: (r) => { route = r.resource; return () => {} } },
       agents: { get: (id) => (String(id) === SID ? agent : undefined) },
       subagents,
-      llm: undefined,
+      llm: opts.llm,
       agentDefaultModel: undefined,
       configEditor: undefined,
     }[name]),
@@ -128,7 +128,7 @@ function harness(state) {
   const logText = () => fs.readFileSync(logFile, 'utf8')
   const wait = (ms = 30) => new Promise((r) => setTimeout(r, ms))
   const cleanup = () => fs.rmSync(dir, { recursive: true, force: true })
-  return { dir, sent, activated, followups, childTurn, commitVerdict, native, preStep, toggle, forwards, logText, wait, cleanup, turnStart, turnEnd, userMsg, assistantMsg, settlement, imageMsg }
+  return { dir, sent, activated, followups, childTurn, commitVerdict, native, preStep, toggle, forwards, logText, wait, cleanup, turnStart, turnEnd, userMsg, assistantMsg, settlement, imageMsg, route }
 }
 
 test('f5bb replay: a settlement-notice-only turn is never forwarded', async (t) => {
@@ -411,4 +411,82 @@ test('only source.kind === "user" is user speech (runtime-context is context)', 
   assert.equal(h.forwards().length, 0, 'a context-only turn earns no ticket')
   assert.match(h.logText(), /\[注入:runtime-context\] Current runtime context/)
   assert.doesNotMatch(h.logText(), /\[PMO\] Current runtime context/)
+})
+
+test('session model/effort change resets the reviewer immediately and uses the model catalog', async (t) => {
+  const llm = {
+    resolveModelInfo: async (provider, model) => {
+      if (provider === 'qwen') {
+        return {
+          provider, id: model, name: model,
+          reasoning: {
+            defaultEffort: 'medium',
+            efforts: [
+              { id: 'off', name: 'off' },
+              { id: 'low', name: 'low' },
+              { id: 'medium', name: 'medium' },
+              { id: 'high', name: 'high' },
+            ],
+          },
+        }
+      }
+      return {
+        provider, id: model, name: model,
+        reasoning: {
+          defaultEffort: 'max',
+          efforts: [
+            { id: 'minimal', name: 'minimal' },
+            { id: 'low', name: 'low' },
+            { id: 'medium', name: 'medium' },
+            { id: 'high', name: 'high' },
+            { id: 'max', name: 'max' },
+          ],
+        },
+      }
+    },
+  }
+  const h = harness(null, { llm })
+  t.after(() => h.cleanup())
+  await h.toggle(true)
+  await h.wait()
+  assert.equal(h.activated.length, 1, 'starting the loop creates the inherited reviewer')
+
+  const set = async (qs) => {
+    const res = await h.route(new Request('http://x/pmo-button/session-config/set?' + qs))
+    return res.json()
+  }
+  const changed = await set(`session=${SID}&provider=qwen&model=Qwen3.8-Flash-Next-Uncensored-1M&effort=high&maxRounds=`)
+  assert.equal(changed.ok, true)
+  assert.equal(changed.reset, true, 'the stale child must be reset immediately, not on the next toggle')
+  assert.equal(changed.effective.provider, 'qwen')
+  assert.equal(changed.effective.effort, 'high')
+  assert.deepEqual(changed.reasoning.efforts.map((e) => e.id), ['off', 'low', 'medium', 'high'])
+  assert.ok(!changed.reasoning.efforts.some((e) => e.id === 'max'), 'qwen must not advertise max')
+  assert.match(h.logText(), /已重置审查官/)
+  assert.equal(h.activated.length, 2, 'the reset recreates the reviewer with the new model immediately')
+  assert.deepEqual(h.activated[1].request.agentOptions, {
+    provider: 'qwen',
+    model: 'Qwen3.8-Flash-Next-Uncensored-1M',
+    reasoningEffort: 'high',
+  })
+
+  // The recreated child is reused; the review is not skipped for "no child".
+  h.turnStart(1)
+  h.userMsg('继续')
+  h.assistantMsg('继续做')
+  h.turnEnd(1)
+  await h.wait()
+  assert.equal(h.forwards().length, 1, 'the next review is delivered to the recreated child')
+  assert.equal(h.activated.length, 2, 'the recreated child is reused')
+
+  // An effort the model does not advertise is not persisted.
+  const bad = await set(`session=${SID}&provider=qwen&model=Qwen3.8-Flash-Next-Uncensored-1M&effort=max&maxRounds=`)
+  assert.equal(bad.effortAdjusted, true)
+  assert.equal(bad.override.effort, undefined)
+  assert.equal(bad.effective.effort, '')
+
+  // The menu's initial read carries the same model catalog.
+  const got = await (await h.route(new Request(`http://x/pmo-button/session-config?session=${SID}`))).json()
+  assert.equal(got.override.provider, 'qwen')
+  assert.deepEqual(got.reasoning.efforts.map((e) => e.id), ['off', 'low', 'medium', 'high'])
 })

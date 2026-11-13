@@ -232,6 +232,7 @@ dsh --profile <你的profile> --dump-config   # 验证插件树
 
 ## 📌 版本
 
+- **0.12.1** — 修复：会话级审查模型/思考等级变更后立即重置审查官（此前要等下次点亮，出现“选了 qwen 却仍跑 deepseek-official，旧 key 401”）；思考等级改为按 `llm.resolveModelInfo()` 的模型能力动态列出（qwen 不再出现 `max`，`high → xhigh` 仍由 provider 别名处理）；全局配置同样校验模型/effort 组合；子代理创建日志记录实际审查模型。
 - **0.12.0** — 双线路接管（线路 B + `agent/pre-step` 闸门）、身份提示词变更补发、会话级设置菜单、鲸鱼胶囊控件（四态 + 游动动效）、配置面板重构（模型 / 思考等级 / 提供方 / 身份提示词）、模型目录修复 + `/providers`；Windows 真机与 12 项 live 回归全过。
 - 0.11.x — 签到/审查分离、整行 STATUS、DONE 闸门、转发票闸门、载荷优先。
 
