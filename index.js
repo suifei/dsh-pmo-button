@@ -33,7 +33,7 @@ export const name = 'dsh-pmo-button'
 export const inject = ['webServer']
 /** Host-half version, logged on activation so an operator can tell which build
  *  the running Host actually imported (hot reload vs stale module). */
-const HOST_VERSION = '0.12.1'
+const HOST_VERSION = '0.12.2'
 
 /** The identity prompt; delivered once per session and re-delivered only when its text changes. */
 const ROLE_PROMPT_DEFAULT = [
@@ -850,9 +850,11 @@ export function apply(ctx, config) {
       // a combination the next review cannot run.
       let reasoning = await reasoningFor(validated.childModelProvider, validated.childModel)
       let effortAdjusted = false
-      if (validated.childReasoningEffort && reasoning && reasoning.efforts.length) {
-        const supported = reasoning.efforts.some((e) => e.id === validated.childReasoningEffort)
-        if (!supported) {
+      if (validated.childReasoningEffort) {
+        if (!validated.childModelProvider || !validated.childModel) {
+          validated = { ...validated, childReasoningEffort: '' }
+          effortAdjusted = true
+        } else if (reasoning && reasoning.efforts.length && !reasoning.efforts.some((e) => e.id === validated.childReasoningEffort)) {
           validated = { ...validated, childReasoningEffort: '' }
           effortAdjusted = true
         }
@@ -927,9 +929,14 @@ export function apply(ctx, config) {
       let after = effectiveFor(sid)
       let reasoning = await reasoningFor(after.provider, after.model)
       let effortAdjusted = false
-      if (cur.effort && reasoning && reasoning.efforts.length) {
-        const supported = reasoning.efforts.some((e) => e.id === cur.effort)
-        if (!supported) {
+      if (cur.effort) {
+        if (!after.provider || !after.model) {
+          delete cur.effort
+          overrides.set(sid, cur)
+          after = effectiveFor(sid)
+          reasoning = await reasoningFor(after.provider, after.model)
+          effortAdjusted = true
+        } else if (reasoning && reasoning.efforts.length && !reasoning.efforts.some((e) => e.id === cur.effort)) {
           delete cur.effort
           overrides.set(sid, cur)
           after = effectiveFor(sid)

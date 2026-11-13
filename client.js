@@ -18,19 +18,33 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const h = React.createElement;
     const BASE = '/pmo-button';
-    const VER = 'v0.12.1';
-    const EFFORTS = [
-      ['', '继承主会话思考等级'],
-      ['minimal', 'minimal（最小）'],
-      ['low', 'low（低）'],
-      ['medium', 'medium（中）'],
-      ['high', 'high（高）'],
-      ['max', 'max（最大）'],
-    ];
+    const VER = 'v0.12.2';
+    /** Effort choices from the model's DSH reasoning catalog. No hardcoded
+     *  minimal/low/... fallback: without a concrete model the only honest
+     *  choice is inherit. Both the session menu and the config panel use this
+     *  single builder (qwen: off/low/medium/high; deepseek-flash: off/low/high/max). */
+    function effortChoices(reasoning, current) {
+      const out = [{ value: '', label: t.inheritEffort }];
+      const rows = reasoning && Array.isArray(reasoning.efforts) ? reasoning.efforts : [];
+      for (const e of rows) {
+        const id = String(e.id || '');
+        if (!id) continue;
+        const name = String(e.name || id);
+        out.push({ value: id, label: (name && name !== id) ? name + '（' + id + '）' : (name || id) });
+      }
+      const has = out.some(function (o) { return o.value === current; });
+      if (current && !has) {
+        out.push({
+          value: current,
+          label: current + (rows.length ? '（当前模型不支持）' : '（模型能力未知，先选模型）'),
+        });
+      }
+      return out;
+    }
     let loadError = null;
     let t = {
       start: 'PMO：启动自动化', stop: 'PMO：运行中，点击停止', busy: 'PMO：处理中…', offline: 'PMO：宿主未响应',
-      menuTitle: '会话级审查设置', menuSub: '只影响当前会话；全局默认在 插件 → PMO 按钮 页面配置；思考等级按所选模型能力列出',
+      menuTitle: '会话级审查设置', menuSub: '只影响当前会话；全局默认在 插件 → PMO 按钮 页面配置；思考等级按所选模型能力列出，模型留空时只能继承。',
       model: '审查模型', effort: '思考等级', rounds: '轮数上限',
       inheritModel: '继承主会话模型', inheritEffort: '继承主会话思考等级',
       roundsHint: '留空 = 继承全局', saved: '已保存 ✓', savedReset: '已保存 ✓（审查官已重置，下次审查使用新模型）', fail: '保存失败',
@@ -196,11 +210,9 @@ window.__ModuleLoader__.load({
       optInh.value = '';
       selM.appendChild(optInh);
       const selE = el('select', 'pmo-menu-select');
-      for (const o of EFFORTS) {
-        const opt = el('option', null, o[1]);
-        opt.value = o[0];
-        selE.appendChild(opt);
-      }
+      const inhE = el('option', null, t.inheritEffort);
+      inhE.value = '';
+      selE.appendChild(inhE);
       const inR = el('input', 'pmo-menu-input');
       inR.type = 'number';
       inR.min = '0';
@@ -212,26 +224,9 @@ window.__ModuleLoader__.load({
       function renderEfforts(reasoning, current) {
         const keep = current === undefined ? selE.value : String(current || '');
         while (selE.firstChild) selE.removeChild(selE.firstChild);
-        const inh = el('option', null, t.inheritEffort);
-        inh.value = '';
-        selE.appendChild(inh);
-        let rows = EFFORTS.filter(function (o) { return o[0]; });
-        if (reasoning && Array.isArray(reasoning.efforts) && reasoning.efforts.length) {
-          rows = reasoning.efforts.map(function (e) {
-            const id = String(e.id || '');
-            const name = String(e.name || id);
-            return [id, (name && name !== id) ? name + '（' + id + '）' : (name || id)];
-          });
-        }
-        for (const row of rows) {
-          const op = el('option', null, row[1]);
-          op.value = row[0];
-          selE.appendChild(op);
-        }
-        const has = Array.prototype.some.call(selE.options, function (o) { return o.value === keep; });
-        if (keep && !has) {
-          const op = el('option', null, keep + '（当前模型不支持）');
-          op.value = keep;
+        for (const row of effortChoices(reasoning, keep)) {
+          const op = el('option', null, row.label);
+          op.value = row.value;
           selE.appendChild(op);
         }
         selE.value = keep;
@@ -587,22 +582,9 @@ window.__ModuleLoader__.load({
         }
         function effortField() {
           const value = view.cfg && view.cfg.childReasoningEffort ? String(view.cfg.childReasoningEffort) : '';
-          let opts;
-          if (view.reasoning && Array.isArray(view.reasoning.efforts) && view.reasoning.efforts.length) {
-            opts = [h('option', { value: '', key: 'inherit' }, '继承主会话思考等级')];
-            for (const e of view.reasoning.efforts) {
-              const id = String(e.id || '');
-              const name = String(e.name || id);
-              opts.push(h('option', { value: id, key: id }, (name && name !== id) ? name + '（' + id + '）' : (name || id)));
-            }
-            const known = view.reasoning.efforts.some(function (e) { return String(e.id) === value; });
-            if (value && !known) opts.push(h('option', { value: value, key: 'current' }, value + '（当前模型不支持）'));
-          } else {
-            opts = EFFORTS.map(function (o) { return h('option', { value: o[0], key: o[0] || 'inherit' }, o[1]); });
-            if (value && !EFFORTS.some(function (o) { return o[0] === value; })) {
-              opts.push(h('option', { value: value, key: 'current' }, value));
-            }
-          }
+          const opts = effortChoices(view.reasoning, value).map(function (row) {
+            return h('option', { value: row.value, key: row.value || 'inherit' }, row.label);
+          });
           return h('label', { className: 'pmo-cfg-row', key: 'childReasoningEffort' },
             h('span', { className: 'pmo-cfg-label' }, '思考等级'),
             h('select', {
@@ -633,7 +615,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'pmo-cfg-sectitle' }, '审查模型（异构审查：审查方 ≠ 执行方）'),
             modelField(),
             effortField(),
-            h('div', { className: 'pmo-cfg-note' }, '留空 = 继承主会话；思考等级按所选模型能力列出；修改模型/思考等级后，下次启动会重置审查官（记忆清零）。'),
+            h('div', { className: 'pmo-cfg-note' }, '留空 = 继承主会话；思考等级按所选模型能力列出，模型留空时只能继承；修改模型/思考等级后，下次启动会重置审查官（记忆清零）。'),
           ),
           h('div', { className: 'pmo-cfg-section' },
             h('div', { className: 'pmo-cfg-sectitle' }, '运行'),
