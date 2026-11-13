@@ -1,5 +1,8 @@
 /**
- * Regression tests for the PMO review-forward gate (v0.11.2).
+ * Regression tests for the PMO review loop: the forward ticket gate and
+ * payload priority (v0.11.2), and the dual-line relay (v0.12.0) — verdicts are
+ * read from the child session's own events and delivered by the plugin, while
+ * dsh's native child notices are dropped at agent/pre-step.
  *
  * Replays the 2026-11-13 f5bb incident shape against the real plugin `apply()`:
  * a settlement-notice-triggered turn must never be forwarded, a verdict-less
@@ -22,12 +25,12 @@ function harness(state) {
   const logFile = path.join(dir, 'pmo.log')
   if (state) fs.writeFileSync(path.join(dir, 'pmo-state.json'), JSON.stringify(state), 'utf8')
 
-  const listeners = []
+  const listeners = {}
   const sent = []
   const activated = []
-  const injected = []
+  const followups = []
   let route
-  const agent = { id: SID, inject: (m) => injected.push(m) }
+  const agent = { id: SID, followup: (m) => followups.push(m) }
   const subagents = {
     list: () => ['spawn'],
     sendMessage: async (sender, targetId, content) => {
@@ -40,7 +43,7 @@ function harness(state) {
     },
   }
   const ctx = {
-    on: (name, fn) => { listeners.push(fn); return () => {} },
+    on: (name, fn) => { (listeners[name] ??= []).push(fn); return () => {} },
     get: (name) => ({
       webServer: { register: (r) => { route = r.resource; return () => {} } },
       agents: { get: (id) => (String(id) === SID ? agent : undefined) },
@@ -65,7 +68,18 @@ function harness(state) {
     childReasoningEffort: '',
   })
 
-  const emit = (event) => listeners.forEach((fn) => fn({ id: SID }, event))
+  const emitTo = (sid, event) => listeners['session/event'].forEach((fn) => fn({ id: sid }, event))
+  const emit = (event) => emitTo(SID, event)
+  /** One whole turn of the PMO child: its closing text, then turn/end. */
+  const childTurn = (text, reason = { kind: 'completed' }) => {
+    emitTo(CHILD, { type: 'turn/start', data: { turn: 1 } })
+    if (text) emitTo(CHILD, { type: 'assistant/message', data: { message: { role: 'assistant', content: [{ type: 'text', text }], source: { kind: 'model', provider: 'test', model: 'm1' } } } })
+    emitTo(CHILD, { type: 'turn/end', data: { turn: 1, reason } })
+  }
+  /** Replay a verdict the plugin delivered, as the main session commits it. */
+  const commitVerdict = (m) => emit({ type: 'user/message', data: { role: 'user', content: m.content, source: m.source } })
+  const native = (kind = 'subagent-settled', id = 'n1') => ({ id, source: { kind, senderSessionId: CHILD } })
+  const preStep = (messages, dflt, agentId = SID) => listeners['agent/pre-step'][0]({ agent: { id: agentId }, messages, turn: 1, step: 1 }, async () => dflt)
   const turnStart = (turn) => emit({ type: 'turn/start', data: { turn } })
   const turnEnd = (turn) => emit({ type: 'turn/end', data: { turn, reason: { kind: 'completed' } } })
   const userMsg = (text, kind = 'user') => emit({
@@ -114,7 +128,7 @@ function harness(state) {
   const logText = () => fs.readFileSync(logFile, 'utf8')
   const wait = (ms = 30) => new Promise((r) => setTimeout(r, ms))
   const cleanup = () => fs.rmSync(dir, { recursive: true, force: true })
-  return { dir, sent, activated, injected, toggle, forwards, logText, wait, cleanup, turnStart, turnEnd, userMsg, assistantMsg, settlement, imageMsg }
+  return { dir, sent, activated, followups, childTurn, commitVerdict, native, preStep, toggle, forwards, logText, wait, cleanup, turnStart, turnEnd, userMsg, assistantMsg, settlement, imageMsg }
 }
 
 test('f5bb replay: a settlement-notice-only turn is never forwarded', async (t) => {
@@ -150,15 +164,21 @@ test('user turn forwards; a verdict-less reply stops the loop', async (t) => {
   assert.match(first[0].text, /\[用户\] 请复核这次改动/)
   assert.match(first[0].text, /\[主代理\] 改好了/)
 
-  // The child answers without a STATUS line (the f5bb "不构成审查请求" shape).
-  h.settlement('收到转发块：本轮无 [用户] 原话，不构成审查请求。')
+  // The child answers without a STATUS line (the f5bb "不构成审查请求" shape):
+  // the loop stops and the user is told, instead of idling silently.
+  h.childTurn('收到转发块：本轮无 [用户] 原话，不构成审查请求。文中提到 STATUS: DONE 不算判定。')
+  assert.equal(h.followups.length, 1)
+  assert.equal(h.followups[0].source.kind, 'pmo-review')
+  assert.match(h.followups[0].content[0].text, /STATUS=NEED_HUMAN/)
+  assert.match(h.followups[0].content[0].text, /未按协议输出 STATUS/)
   h.turnStart(3)
+  h.commitVerdict(h.followups[0])
   h.assistantMsg('好的')
   h.turnEnd(3)
   await h.wait()
 
   assert.equal(h.forwards().length, 1, 'no verdict → no further forward')
-  assert.match(h.logText(), /不授予新转发票/)
+  assert.match(h.logText(), /自动熄灭/)
 })
 
 test('CONTINUE earns one continuation review; DONE holds the gate', async (t) => {
@@ -174,18 +194,26 @@ test('CONTINUE earns one continuation review; DONE holds the gate', async (t) =>
   await h.wait()
   assert.equal(h.forwards().length, 1)
 
-  h.settlement('STATUS: CONTINUE\n结论：无问题')
-  await h.wait()
+  h.childTurn('STATUS: CONTINUE\n结论：无问题\n下一步：补测试')
+  assert.equal(h.followups.length, 1)
+  assert.match(h.followups[0].content[0].text, /STATUS=CONTINUE/)
+  assert.match(h.followups[0].content[0].text, /下一步：补测试/)
   h.turnStart(2)
+  h.commitVerdict(h.followups[0])
   h.assistantMsg('继续做下一步')
   h.turnEnd(2)
   await h.wait()
   assert.equal(h.forwards().length, 2)
   assert.match(h.forwards()[1].text, /续轮审查请求/)
+  assert.match(h.forwards()[1].text, /\[PMO审查\] 【PMO 审查/)
+  assert.doesNotMatch(h.forwards()[1].text, /^\[用户\] /m, 'a verdict is never user speech')
+  assert.match(h.logText(), /第 2\/20 轮审查/, 'a verdict must not reset the round counter')
 
-  h.settlement('STATUS: DONE\n结论：完成')
-  await h.wait()
+  h.childTurn('**STATUS: DONE**\n结论：完成')
+  assert.equal(h.followups.length, 2)
+  assert.match(h.followups[1].content[0].text, /STATUS=DONE/)
   h.turnStart(3)
+  h.commitVerdict(h.followups[1])
   h.assistantMsg('收尾')
   h.turnEnd(3)
   await h.wait()
@@ -277,4 +305,110 @@ test('pre-upgrade state without an override reuses the child', async (t) => {
 
   assert.equal(h.activated.length, 0)
   assert.equal(h.sent.filter((s) => s.targetId === 'old-child').length, 1, 'inherit case keeps the durable child')
+})
+
+test('line B: check-in acks and side chats with the child never reach the main session', async (t) => {
+  const h = harness()
+  t.after(() => h.cleanup())
+  await h.toggle(true)
+  await h.wait()
+  assert.equal(h.activated.length, 1)
+  assert.equal(h.activated[0].delivery, 'caller', 'no native settlement notice or send_message guidance on creation')
+  assert.match(h.activated[0].request.prompt.at(-1).text, /^\[待命\] /)
+
+  h.childTurn('收到，待命。')
+  h.childTurn('STATUS: CONTINUE\n（用户在侧栏直接与审查官对话，不是审查回复）')
+  assert.equal(h.followups.length, 0)
+})
+
+test('line B: an abnormal reviewer turn becomes NEED_HUMAN', async (t) => {
+  const h = harness()
+  t.after(() => h.cleanup())
+  await h.toggle(true)
+  await h.wait()
+  h.turnStart(1)
+  h.userMsg('做 X')
+  h.assistantMsg('做完了')
+  h.turnEnd(1)
+  await h.wait()
+
+  h.childTurn('', { kind: 'error', error: { message: 'boom', code: 'UNKNOWN' } })
+  assert.equal(h.followups.length, 1)
+  assert.match(h.followups[0].content[0].text, /STATUS=NEED_HUMAN/)
+  assert.match(h.followups[0].content[0].text, /未正常结束（error）/)
+})
+
+test('pre-step gate: native child notices never enter the model', async (t) => {
+  const h = harness()
+  t.after(() => h.cleanup())
+  await h.toggle(true)
+  await h.wait()
+  const user = { id: 'u1', source: { kind: 'user' } }
+  const context = { id: 'ctx', source: { kind: 'runtime-context' } }
+
+  // Only native notices: an empty step, without assembling the default batch.
+  let nextCalled = false
+  const only = await h.preStep([h.native()], undefined).then((d) => d, () => { nextCalled = true })
+  assert.deepEqual(only, { kind: 'enter', messages: [] })
+  assert.equal(nextCalled, false)
+  // The turn that notice opened closes empty: neither logged nor forwarded.
+  const before = h.logText()
+  h.turnStart(1)
+  h.turnEnd(1)
+  await h.wait()
+  assert.equal(h.logText().split('[轮次结束]').length, before.split('[轮次结束]').length)
+
+  // Mixed batch: the notice is removed, everything else is kept as decided.
+  const mixed = await h.preStep([user, h.native('agent-message', 'n2')], { kind: 'enter', messages: [user, h.native('agent-message', 'n2'), context], startsRequestSeries: true })
+  assert.deepEqual(mixed.messages, [user, context])
+  assert.equal(mixed.startsRequestSeries, true)
+
+  // Untouched batches and other sessions pass straight through.
+  const passthrough = { kind: 'enter', messages: [user] }
+  assert.equal(await h.preStep([user], passthrough), passthrough)
+  assert.equal(await h.preStep([h.native()], passthrough, 'other-session'), passthrough)
+
+  // Button off: the child is still the plugin's — its notices stay out.
+  await h.toggle(false)
+  assert.deepEqual(await h.preStep([h.native()], passthrough), { kind: 'enter', messages: [] })
+})
+
+test('identity prompt: once per session, again only when its text changes', async (t) => {
+  const h = harness()
+  await h.toggle(true)
+  await h.wait()
+  assert.equal(h.activated[0].request.prompt.length, 2, 'role + check-in on creation')
+  await h.toggle(false)
+  await h.toggle(true)
+  await h.wait()
+  assert.equal(h.sent.length, 1)
+  assert.doesNotMatch(h.sent[0].text, /身份规程/, 'unchanged prompt is not resent')
+
+  // A pre-0.12 state stored `true` instead of a fingerprint: resent once, marked as an update.
+  const state = JSON.parse(fs.readFileSync(path.join(h.dir, 'pmo-state.json'), 'utf8'))
+  state.roleSent = { [SID]: true }
+  h.cleanup()
+  const h2 = harness(state)
+  t.after(() => h2.cleanup())
+  await h2.toggle(true)
+  await h2.wait()
+  assert.equal(h2.activated.length, 0, 'child reused')
+  assert.match(h2.sent[0].text, /【身份设定更新，取代此前版本】\n身份规程/)
+})
+
+test('only source.kind === "user" is user speech (runtime-context is context)', async (t) => {
+  const h = harness()
+  t.after(() => h.cleanup())
+  await h.toggle(true)
+  await h.wait()
+
+  h.turnStart(1)
+  h.userMsg('Current runtime context. This snapshot supersedes earlier ones.', 'runtime-context')
+  h.assistantMsg('好的')
+  h.turnEnd(1)
+  await h.wait()
+
+  assert.equal(h.forwards().length, 0, 'a context-only turn earns no ticket')
+  assert.match(h.logText(), /\[注入:runtime-context\] Current runtime context/)
+  assert.doesNotMatch(h.logText(), /\[PMO\] Current runtime context/)
 })

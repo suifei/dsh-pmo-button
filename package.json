@@ -1,6 +1,6 @@
 {
   "name": "@suifei/dsh-pmo-button",
-  "version": "0.11.2",
+  "version": "0.12.0",
   "description": "PMO 审查循环按钮 for DeepSeek Harness — 持久审查子代理 + 轮次转发 + STATUS 协议（CONTINUE/DONE/NEED_HUMAN）自动循环推进",
   "keywords": [
     "deepseek-harness", "dsh", "dsh-plugin", "pmo", "code-review",
@@ -16,7 +16,8 @@
     ".": "./index.js",
     "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
-    "./icon": "./icon.svg"
+    "./icon": "./icon.svg",
+    "./logo": "./logo.svg"
   },
   "files": [
     "index.js",
@@ -25,11 +26,13 @@
     "locale/en.json",
     "locale/zh.json",
     "icon.svg",
+    "logo.svg",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --check index.js && node --check client.js && node --test test/review-gate.test.mjs"
+    "test": "node --check index.js && node --check client.js && node --test test/review-gate.test.mjs",
+    "test:live": "node test/live/run.mjs"
   },
   "publishConfig": {
     "access": "public"

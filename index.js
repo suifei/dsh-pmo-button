@@ -1,32 +1,41 @@
 /**
- * PMO button — Host half v0.11.2.
- * Per-session armed set, turn buffers, child registry, and the once-per-session
- * identity-prompt flag are persisted (pmo-state.json), so restarts lose nothing.
- * The `session/event` feed drives two jobs for armed sessions:
- *  1. turn-completion logging — user/message + assistant/message are buffered
- *     per open turn (the two surface types carrying model-visible content) and
- *     flushed to the log file when turn/end closes the turn;
- *  2. the auto-review loop — the flushed blocks are forwarded to the persistent
- *     PMO child (created once per session on startActivation, reused via
- *     sendMessage with cold resume), whose STATUS closing line returns to this
- *     session through the delivery:'parent' settlement notice and is recognized
- *     and logged here.
+ * PMO button — Host half v0.12.0 (dual-line relay).
+ * Per-session armed set, turn buffers, child registry, and the identity-prompt
+ * fingerprint are persisted (pmo-state.json), so restarts lose nothing.
+ *
+ * Both directions of the review loop pass through this plugin:
+ *  Line A (main → child): the `session/event` feed of an armed session buffers
+ *     user/message + assistant/message per open turn; turn/end flushes the
+ *     block to the log and forwards it to the persistent PMO child via
+ *     subagents.sendMessage (cold resume when the child is not resident).
+ *     A forward needs a ticket: fresh user speech in the turn, or a CONTINUE
+ *     verdict since the last forward (0.11.2 gate, kept as the definition of
+ *     "what is reviewable").
+ *  Line B (child → main): the SAME `session/event` feed of the child session
+ *     captures its closing text; the child's turn/end runs gate B (STATUS
+ *     parse, check-in filter) and the plugin itself delivers the verdict to
+ *     the main session with agent.followup().
+ *  dsh's native return path is silenced: a cold-resumed activation always
+ *     settles with delivery 'parent' (dsh-subagent coldResume passes no
+ *     delivery), so an `agent/pre-step` listener drops the child's
+ *     `subagent-settled` / `agent-message` notices before they reach the model.
  * No direct session-log reads: the JSONL persistence is zstd-compressed and
  * batch-flushed, while session/event is the documented post-commit surface.
  */
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
 
 export const name = 'dsh-pmo-button'
 export const inject = ['webServer']
 /** Host-half version, logged on activation so an operator can tell which build
  *  the running Host actually imported (hot reload vs stale module). */
-const HOST_VERSION = '0.11.2'
+const HOST_VERSION = '0.12.0'
 
-/** The identity prompt delivered exactly once per session (user-authored 原文). */
+/** The identity prompt; delivered once per session and re-delivered only when its text changes. */
 const ROLE_PROMPT_DEFAULT = [
   '你是本会话的常驻 PMO，代替用户审查父代理（主会话的编码代理）每一轮的工作。',
   '此设定长期有效，直到用户明确更改。',
@@ -34,6 +43,7 @@ const ROLE_PROMPT_DEFAULT = [
   '【你会收到】父代理每轮结束后的转发块：',
   '- [用户] 用户原话：最高权威，目标和验收标准的唯一来源',
   '- [主代理] 该轮完整答复：待审对象，是自述，不是事实',
+  '- [PMO审查] 你上一轮的审查意见（已由插件转达给主代理）：用于核对主代理是否照做，不是用户原话',
   '- [注入] 系统注入：忽略',
   '- [待命] 循环签到：PMO 重新启动的确认，不是审查请求',
   '',
@@ -53,9 +63,16 @@ const ROLE_PROMPT_DEFAULT = [
   '- 没见过用户原话、需求有歧义、同一问题连续两轮未解决、涉及不可逆操作',
   '  → NEED_HUMAN，写清需要用户决定什么。',
   '- 用户原话之外的改进建议一律不提。',
-  '- 通讯纪律：不要使用 send_message 向父代理发送消息；你的结束语会随结算自动回传父会话，无需另发。',
-  '- 签到与审查分离：收到签到（无 [用户] 新指令的 [待命] 消息）时，只回复一句确认并保持待命，禁止输出 STATUS/DONE；收到「审查请求」（含 [用户] 新指令）或「续轮审查请求」（无新 [用户]，主代理在执行你上轮的 CONTINUE 下一步）时，按规程审查并输出 STATUS。',
+  '- 通讯纪律：不要使用 send_message 向父代理发送消息；你的结束语由 PMO 插件接管转达，无需另发。',
+  '- 签到与审查分离：收到签到（[待命] 消息）时，只回复一句确认并保持待命，禁止输出 STATUS/DONE；收到「审查请求」（含 [用户] 新指令）或「续轮审查请求」（无新 [用户]，主代理在执行你上轮的 CONTINUE 下一步）时，按规程审查并输出 STATUS。',
 ].join('\n')
+
+/** Source kind of the verdict messages this plugin delivers to the main session. */
+const REVIEW_SOURCE_KIND = 'pmo-review'
+/** dsh's own child→parent message kinds (dsh-subagent continuation-messages). */
+const NATIVE_RETURN_KINDS = new Set(['subagent-settled', 'agent-message'])
+/** Whole-line STATUS verdict; tolerates markdown emphasis around the line. */
+const STATUS_LINE = /^[\s*#>`]*STATUS[\s*]*[:：][\s*`]*(CONTINUE|DONE|NEED_HUMAN)[\s*`]*$/m
 
 /** @typedef {{ logFile: string, maxChars: number, provider: string, childLabel: string, greet: string, rolePrompt: string }} Config */
 export const Config = Schema.object({
@@ -68,7 +85,7 @@ export const Config = Schema.object({
   childLabel: Schema.string().default('PMO 子代理'),
   /** Text sent to the child each time PMO starts (a check-in, NOT a review). */
   greet: Schema.string().default('PMO 循环已启动（签到，非审查请求）：审查官就位，用户的下一轮工作与审查请求将随后续转发块到达。请保持待命；本轮只需回复一句确认，不要输出 STATUS。'),
-  /** Identity prompt; delivered exactly once per session (empty disables). */
+  /** Identity prompt; delivered once per session, again only when its text changes (empty disables). */
   rolePrompt: Schema.string().default(ROLE_PROMPT_DEFAULT),
   /** Review-round cap per session since the last user input; 0 disables the cap. */
   maxRounds: Schema.number().default(20),
@@ -95,8 +112,12 @@ export function apply(ctx, config) {
   const turnCounts = new Map()
   /** sid -> childId: the persistent PMO subagent session per parent session */
   const children = new Map()
-  /** sid -> true: the identity prompt was admitted by the child (once per session) */
+  /** sid -> fingerprint of the identity prompt the child admitted (resent when the text changes) */
   const roleSent = new Map()
+  /** childId -> closing text of the child's open turn (line B capture) */
+  const childReports = new Map()
+  /** sid -> native dsh notices dropped by the pre-step gate in the open turn */
+  const gateDrops = new Map()
   /** sid -> true: the child returned STATUS=DONE — forward gate until user speech or restart */
   const doneSet = new Set()
   /** sid -> true: auto-stopped (STATUS !== CONTINUE or round cap) — button dimmed, listener live */
@@ -154,7 +175,12 @@ export function apply(ctx, config) {
       for (const [sid, cid] of Object.entries(parsed.children)) children.set(sid, String(cid))
     }
     if (parsed?.roleSent && typeof parsed.roleSent === 'object') {
-      for (const sid of Object.keys(parsed.roleSent)) roleSent.set(sid, true)
+      // Pre-0.12 states stored `true`: it matches no fingerprint, so the
+      // updated protocol prompt is delivered once on the next start.
+      for (const [sid, fp] of Object.entries(parsed.roleSent)) roleSent.set(sid, String(fp))
+    }
+    if (parsed?.childReports && typeof parsed.childReports === 'object') {
+      for (const [cid, text] of Object.entries(parsed.childReports)) childReports.set(cid, String(text))
     }
     if (parsed?.doneSet && typeof parsed.doneSet === 'object') {
       for (const sid of Object.keys(parsed.doneSet)) doneSet.add(sid)
@@ -182,12 +208,13 @@ export function apply(ctx, config) {
     const kept = {}
     for (const [sid, b] of buffers) if (enabled.has(sid)) kept[sid] = b
     const doc = {
-      version: 9,
+      version: 10,
       enabled: [...enabled],
       turnCounts: Object.fromEntries(turnCounts),
       buffers: kept,
       children: Object.fromEntries(children),
-      roleSent: Object.fromEntries([...roleSent.keys()].map((sid) => [sid, true])),
+      roleSent: Object.fromEntries(roleSent),
+      childReports: Object.fromEntries(childReports),
       doneSet: Object.fromEntries([...doneSet.keys()].map((sid) => [sid, true])),
       stopped: Object.fromEntries([...stopped.keys()].map((sid) => [sid, true])),
       overrides: Object.fromEntries([...overrides].map(([k, v]) => [k, v])),
@@ -235,7 +262,7 @@ export function apply(ctx, config) {
     const budget = config.maxChars * 2
     const head = !userBlock && mainBlock
       ? `【PMO 轮次转发 · turn=${turn} · 续轮审查请求】本轮无新 [用户] 指令；主代理正在执行你上一轮 STATUS: CONTINUE 的"下一步"，请复审其答复并按规程输出 STATUS。\n`
-      : `【PMO 轮次转发 · turn=${turn} · 审查请求】以下为用户本轮新输入（[PMO]/[图片]）与主代理答复，请按规程审查并输出 STATUS。\n`
+      : `【PMO 轮次转发 · turn=${turn} · 审查请求】以下为用户本轮新输入（[用户]/[图片]）与主代理答复，请按规程审查并输出 STATUS。\n`
     let body = head
     if (userBlock) body += userBlock + '\n'
     if (mainBlock) {
@@ -243,7 +270,7 @@ export function apply(ctx, config) {
       body += clip(mainBlock, Math.max(200, budget - body.length - 260))
     }
     const injections = []
-    for (const t of otherTasks) injections.push(`[注入:${t.src}] ${clip(t.text, INJECT_BLOCK_MAX)}`)
+    for (const t of otherTasks) injections.push(`${otherLabel(t.src)} ${clip(t.text, INJECT_BLOCK_MAX)}`)
     let kept = 0
     for (const line of injections) {
       if (body.length + line.length + 1 > budget) break
@@ -282,7 +309,24 @@ export function apply(ctx, config) {
   function sourceKind(data) {
     return data?.message?.source?.kind ?? data?.source?.kind ?? 'user'
   }
-  const OTHER_SOURCES = new Set(['inject', 'steering', 'time-context', 'agent-message', 'subagent-settled', 'system-reminder', 'tool-jobs'])
+  // Only source.kind === 'user' is user speech. Every other producer kind
+  // (runtime-context, time-context, steering, tool-jobs, this plugin's own
+  // verdicts, kinds added by future plugins…) is context: MessageSourceMap is
+  // merge-extensible, so a blacklist of known kinds can never be complete.
+  const isUserTask = (t) => t.src === 'user'
+  const isAttachTask = (t) => t.src === '__attach__'
+  /** Log/forward label of one non-user task; the plugin's own verdicts get their own tag. */
+  function otherLabel(src) {
+    return src === REVIEW_SOURCE_KIND ? '[PMO审查]' : `[注入:${src}]`
+  }
+  function rolePromptFp() {
+    return createHash('sha256').update(config.rolePrompt).digest('hex').slice(0, 16)
+  }
+  /** The armed parent session owning this PMO child, if any. */
+  function parentOfChild(childId) {
+    for (const [sid, cid] of children) if (cid === childId) return sid
+    return undefined
+  }
   /** Compact summary of non-text content blocks (images, files, references). */
   function nonTextSummaries(data) {
     const m = data?.message ?? data
@@ -324,6 +368,12 @@ export function apply(ctx, config) {
       maxRounds: ov.maxRounds !== undefined && ov.maxRounds !== null ? Number(ov.maxRounds) : config.maxRounds,
     }
   }
+  /** Error message with its cause chain (SubagentError wraps the real reason in `cause`). */
+  function errText(err) {
+    const out = []
+    for (let e = err, i = 0; e && i < 4; e = e.cause, i++) out.push(e.code ? `${e.message} [${e.code}]` : String(e.message ?? e))
+    return out.join(' ← ')
+  }
   function bufferFor(sid) {
     let b = buffers.get(sid)
     if (!b) { b = emptyBuffer(); buffers.set(sid, b) }
@@ -332,13 +382,18 @@ export function apply(ctx, config) {
 
   function flushTurn(sid, event) {
     const b = buffers.get(sid)
+    // A turn opened only by dsh's native child notice is emptied by the
+    // pre-step gate and closes without a step: nothing to log or forward.
+    const dropped = gateDrops.get(sid) ?? 0
+    gateDrops.delete(sid)
+    if (dropped > 0 && (!b || (b.tasks.length === 0 && b.texts.length === 0))) return
     const turn = event?.data?.turn ?? b?.turn ?? '?'
     const reason = JSON.stringify(event?.data?.reason ?? event?.data ?? null)
     const lines = [`${SEP}${stamp()}  [轮次结束] session=${sid.slice(0, 12)}… turn=${turn} reason=${reason}`]
 
-    const userTasks = (b?.tasks ?? []).filter((t) => !OTHER_SOURCES.has(t.src) && t.src !== '__attach__')
-    const attachTasks = (b?.tasks ?? []).filter((t) => t.src === '__attach__')
-    const otherTasks = (b?.tasks ?? []).filter((t) => OTHER_SOURCES.has(t.src))
+    const userTasks = (b?.tasks ?? []).filter(isUserTask)
+    const attachTasks = (b?.tasks ?? []).filter(isAttachTask)
+    const otherTasks = (b?.tasks ?? []).filter((t) => !isUserTask(t) && !isAttachTask(t))
     // Real user speech is the only unconditional forwarding ticket; a DONE-gated
     // turn is logged but not forwarded (breaks the settlement-echo cycle). A fresh
     // instruction also supersedes any verdict still pending from the last forward.
@@ -361,7 +416,7 @@ export function apply(ctx, config) {
     }
     userTasks.forEach((t) => lines.push(`[PMO] ${clip(t.text)}`))
     attachTasks.forEach((t) => lines.push(clip(t.text)))
-    otherTasks.forEach((t) => lines.push(`[注入:${t.src}] ${clip(t.text)}`))
+    otherTasks.forEach((t) => lines.push(`${otherLabel(t.src)} ${clip(t.text)}`))
     // assistant/message events fire PER STEP; the conversation view shows the
     // concatenation of all step texts, so join them in order to match it.
     if (b?.texts?.length > 0) {
@@ -394,12 +449,11 @@ export function apply(ctx, config) {
     if (append(lines.join('\n') + '\n')) {
       turnCounts.set(sid, (turnCounts.get(sid) ?? 0) + 1)
     }
-    // ---- Phase-2 auto-loop: forward this turn's review blocks to the PMO child
-    // (fire-and-forget; the child's STATUS closing line returns to this session
-    // through the delivery:'parent' settlement notice and wakes the next step).
+    // ---- Line A: forward this turn's review block to the PMO child
+    // (fire-and-forget; the verdict comes back on line B — see onChildEvent).
     // Forwarding requires a ticket: fresh user speech in this turn, or a whole-line
-    // STATUS: CONTINUE verdict since the last forward. Settlement notices and
-    // system reminders never grant one, so they cannot pump the echo loop.
+    // STATUS: CONTINUE verdict since the last forward. Turns woken by anything
+    // else (other subagents' notices, system reminders) are never forwarded.
     const childId = children.get(sid)
     const ticket = forwardAllowed.get(sid) === true
     if (gated) {
@@ -439,7 +493,7 @@ export function apply(ctx, config) {
             })
             .catch((err) => {
               lastForwardReview.set(sid, false)
-              append(`${stamp()}  [轮次转发] turn=${turn} 失败: ${err && err.message ? err.message : err}\n`)
+              append(`${stamp()}  [轮次转发] turn=${turn} 失败: ${errText(err)}\n`)
             })
         }
       }
@@ -456,26 +510,32 @@ export function apply(ctx, config) {
   // First start creates the child (it inherits the parent's model settings and
   // reasoning effort by default) and sends the greet; every later start reuses
   // the SAME persisted childId via sendMessage — the child cold-resumes from
-  // its durable session when it is not resident. delivery:'parent' makes the
-  // parent session receive the child's completion notice.
+  // its durable session when it is not resident. The creating activation uses
+  // delivery:'caller' (no settlement notice, no send_message return guidance
+  // appended to the prompt); cold-resumed activations fall back to 'parent'
+  // inside dsh-subagent, which the pre-step gate below silences.
   //
-  // The identity prompt (config.rolePrompt) rides the NEXT start exactly once
-  // per session — creation or reuse alike — and its flag is committed only
-  // after the child admitted the message, so a failed send auto-retries.
+  // The identity prompt (config.rolePrompt) rides the NEXT start once per
+  // session — creation or reuse alike — and again only when its text changes.
+  // Its fingerprint is committed only after the child admitted the message,
+  // so a failed send auto-retries.
   async function ensureChildAndGreet(sid, agent) {
     const subagents = ctx.get('subagents')
     if (!subagents) throw new Error('subagents 服务未挂载')
-    const needRole = config.rolePrompt.length > 0 && !roleSent.has(sid)
-    const roleBlocks = needRole ? [{ type: 'text', text: config.rolePrompt }] : []
+    const roleFp = rolePromptFp()
+    const prevRole = roleSent.get(sid)
+    const needRole = config.rolePrompt.length > 0 && prevRole !== roleFp
+    const roleText = prevRole === undefined ? config.rolePrompt : `【身份设定更新，取代此前版本】\n${config.rolePrompt}`
+    const roleBlocks = needRole ? [{ type: 'text', text: roleText }] : []
     const existing = children.get(sid)
     if (existing) {
       // options.signal is required by sendMessage's admission path.
       const controller = new AbortController()
-      const mid = await subagents.sendMessage(agent, existing, [...roleBlocks, { type: 'text', text: config.greet }], { signal: controller.signal })
+      const mid = await subagents.sendMessage(agent, existing, [...roleBlocks, { type: 'text', text: `[待命] ${config.greet}` }], { signal: controller.signal })
       if (needRole) {
-        roleSent.set(sid, true)
+        roleSent.set(sid, roleFp)
         saveState()
-        append(`${stamp()}  [身份提示词] 已随问候一次性下发 child=${String(existing).slice(0, 12)}…（本会话不会重复）\n`)
+        append(`${stamp()}  [身份提示词] 已随问候下发 child=${String(existing).slice(0, 12)}…（文本不变则不再重复）\n`)
       }
       lastForwardReview.set(sid, false)
       append(`${stamp()}  [子代理] 已向持久会话发送问候 child=${String(existing).slice(0, 12)}… msg=${String(mid).slice(0, 8)}… text=${config.greet}\n`)
@@ -490,7 +550,7 @@ export function apply(ctx, config) {
     const controller = new AbortController()
     const promptBlocks = [
       ...roleBlocks,
-      { type: 'text', text: config.greet },
+      { type: 'text', text: `[待命] ${config.greet}` },
     ]
     // agentOptions overrides (spawn capability): resolution order — session
     // override (per-session menu) → global config → inherit the parent
@@ -505,7 +565,7 @@ export function apply(ctx, config) {
     const act = await subagents.startActivation({
       provider: config.provider,
       label: config.childLabel,
-      delivery: 'parent',
+      delivery: 'caller',
       signal: controller.signal,
       request,
     })
@@ -516,19 +576,128 @@ export function apply(ctx, config) {
     // (0.11.2: pre-upgrade sessions had no fingerprint and silently skipped the reset).
     modelFps.set(sid, JSON.stringify([eff.provider, eff.model, eff.effort]))
     if (needRole) {
-      roleSent.set(sid, true)
-      append(`${stamp()}  [身份提示词] 已随首条消息一次性下发 child=${String(act.childId).slice(0, 12)}…（本会话不会重复）\n`)
+      roleSent.set(sid, roleFp)
+      append(`${stamp()}  [身份提示词] 已随首条消息下发 child=${String(act.childId).slice(0, 12)}…（文本不变则不再重复）\n`)
     }
     saveState()
     const providers = typeof subagents.list === 'function' ? subagents.list().join(',') : '?'
     append(`${stamp()}  [子代理] 已创建持久子代理「${config.childLabel}」 child=${String(act.childId).slice(0, 12)}… provider=${config.provider} 可用=[${providers}]\n`)
   }
 
+  // ---- Line B: the child's verdict, delivered to the main session by the plugin
+  // agent.followup() queues a next-turn prompt and wakes the driver — the same
+  // call dsh-subagent's own sendWaking() makes for an idle parent. The source
+  // kind is this plugin's own (MessageSourceMap is merge-extensible; consumers
+  // fall through unknown kinds), so the main-session listener never mistakes a
+  // verdict for user speech.
+  function deliverVerdict(sid, childId, status, report) {
+    const head = status === 'CONTINUE'
+      ? `【PMO 审查 · STATUS=CONTINUE】以下是常驻 PMO 审查官对你上一轮工作的审查意见，代表用户授权：请按其"下一步"执行；不同意时说明理由并停下，不要自行改写目标。`
+      : status === 'DONE'
+        ? `【PMO 审查 · STATUS=DONE】审查官确认目标已达成，自动循环已停止。请只用一两句话向用户收尾，不要继续修改或开始新工作。`
+        : `【PMO 审查 · STATUS=NEED_HUMAN】自动循环已停止，等待用户决定。请把下面审查官提出的待决事项原样转达给用户，然后停下，不要替用户做决定。`
+    // Anything other than CONTINUE closes the forward gate BEFORE the main
+    // session is woken, so its wrap-up turn is logged but never forwarded.
+    // A CONTINUE verdict grants exactly one more forward (the ticket).
+    if (status !== 'CONTINUE') extinguish(sid, `STATUS=${status}（循环停转）`)
+    else forwardAllowed.set(sid, true)
+    const agents = ctx.get('agents')
+    const agent = agents && typeof agents.get === 'function' ? agents.get(sid) : undefined
+    if (!agent || typeof agent.followup !== 'function') {
+      if (status === 'CONTINUE') extinguish(sid, '主会话无活跃 Agent，审查意见未送达')
+      else append(`${stamp()}  [线路B] 主会话无活跃 Agent，STATUS=${status} 未送达（见上方子代理报告）\n`)
+      return
+    }
+    agent.followup(createUserMessage({
+      content: [{ type: 'text', text: `${head}\n\n${report}` }],
+      source: {
+        kind: REVIEW_SOURCE_KIND,
+        form: 'notice',
+        summary: boundContextSummary(`PMO 审查 STATUS=${status}`),
+        senderSessionId: childId,
+      },
+    }))
+    append(`${stamp()}  [线路B] STATUS=${status} 已送达主会话 session=${sid.slice(0, 12)}…\n`)
+  }
+
+  /** Gate B: runs when the PMO child's turn closes. */
+  function onChildTurnEnd(sid, childId, event) {
+    const report = redact(childReports.get(childId) ?? '')
+    childReports.delete(childId)
+    const reason = event?.data?.reason
+    const kind = reason?.kind ?? '?'
+    const wasReview = lastForwardReview.get(sid) === true
+    lastForwardReview.set(sid, false)
+    saveState()
+    append(`${SEP}${stamp()}  [子代理报告] child=${String(childId).slice(0, 12)}… turn=${event?.data?.turn ?? '?'} reason=${JSON.stringify(reason ?? null)} ${wasReview ? '审查' : '签到/其他'}\n${clip(report) || '(无结束语)'}\n`)
+    // Check-in acks and side conversations with the child stay on this side.
+    if (!wasReview) return
+    if (kind !== 'completed') {
+      deliverVerdict(sid, childId, 'NEED_HUMAN', `审查官本轮未正常结束（${kind}），没有给出审查结论。${report ? '\n其最后输出：\n' + report : ''}`)
+      return
+    }
+    const m = report.match(STATUS_LINE)
+    if (!m) {
+      deliverVerdict(sid, childId, 'NEED_HUMAN', `审查官未按协议输出 STATUS 行，循环无法自动判定。其原文：\n${report || '(无结束语)'}`)
+      return
+    }
+    append(`${stamp()}  [PMO审查] STATUS=${m[1]}（来自子代理）\n`)
+    deliverVerdict(sid, childId, m[1], report)
+  }
+
+  function onChildEvent(sid, childId, event) {
+    const t = event.type
+    if (t === 'turn/start') {
+      childReports.delete(childId)
+    } else if (t === 'assistant/message') {
+      // Per-step event: the last non-empty text is the child's closing message.
+      const text = textOf(event.data)
+      if (text) { childReports.set(childId, text); saveState() }
+    } else if (t === 'turn/end') {
+      onChildTurnEnd(sid, childId, event)
+    }
+  }
+
+  // ---- silence dsh's native child→parent path ------------------------------
+  // Waterfall contract (dsh-agent-loop preStep): payload.messages are the
+  // claimed inbox messages (already removed from the inbox), next() yields the
+  // default {kind:'enter', messages:[...claimed, context?]}. A batch made only
+  // of the PMO child's notices enters as an EMPTY step: on a turn's first step
+  // the loop closes the turn without a model request, mid-turn it continues
+  // with the tool results it already has. Mixed batches keep everything else.
+  ctx.on('agent/pre-step', async (payload, next) => {
+    let isNative
+    try {
+      const sid = payload?.agent?.id == null ? '' : String(payload.agent.id)
+      // Applies to the plugin-owned child even while the button is off, so
+      // switching off mid-review stops the loop instead of handing it to dsh.
+      const childId = children.get(sid)
+      const claimed = Array.isArray(payload?.messages) ? payload.messages : []
+      isNative = (m) => childId !== undefined && NATIVE_RETURN_KINDS.has(m?.source?.kind) && m.source.senderSessionId === childId
+      const hits = claimed.filter(isNative).length
+      if (hits === 0) return next()
+      gateDrops.set(sid, (gateDrops.get(sid) ?? 0) + hits)
+      append(`${stamp()}  [闸门] 已拦截 dsh 原生回传 ${hits} 条 session=${sid.slice(0, 12)}… turn=${payload.turn} step=${payload.step}\n`)
+      if (hits === claimed.length) return { kind: 'enter', messages: [] }
+    } catch (err) {
+      logger.warn?.(`pmo-button: pre-step gate error: ${err}`)
+      return next()
+    }
+    const decision = await next()
+    if (!decision || decision.kind !== 'enter' || !Array.isArray(decision.messages)) return decision
+    return { ...decision, messages: decision.messages.filter((m) => !isNative(m)) }
+  })
+
   // ---- the documented observation surface: session/event -------------------
   ctx.on('session/event', (session, event) => {
     try {
       if (!event || typeof event.type !== 'string') return
       const sid = session?.id == null ? '' : String(session.id)
+      const parentSid = parentOfChild(sid)
+      if (parentSid !== undefined) {
+        if (enabled.has(parentSid)) onChildEvent(parentSid, sid, event)
+        return
+      }
       if (!enabled.has(sid)) return
       const t = event.type
       if (t === 'turn/start') {
@@ -552,47 +721,6 @@ export function apply(ctx, config) {
           : sourceKind(event.data)
         b.tasks.push({ src: srcKind, text: redact(text) })
         for (const s of nonTextSummaries(event.data)) b.tasks.push({ src: '__attach__', text: s })
-        // Recognize the PMO child's STATUS verdict — but ONLY when the last
-        // forward was a review request, and ONLY on a whole STATUS line:
-        // check-in acks and prose that merely mention "STATUS: X" must never
-        // match (anchored ^…$ with the m flag). A CONTINUE verdict grants exactly
-        // one more forward; silence, a check-in ack, or plain prose grants none,
-        // so a reviewer that stops judging cannot pump the echo loop.
-        const src2 = event.data?.message?.source ?? event.data?.source
-        if (src2 && (src2.kind === 'subagent-settled' || src2.kind === 'agent-message')) {
-          const fromChild = src2.senderSessionId ? ` child=${String(src2.senderSessionId).slice(0, 12)}…` : ''
-          const reviewText = lastForwardReview.get(sid) === true ? redact(textOf(event.data)) : ''
-          const m = reviewText.match(/^\s*STATUS:\s*(CONTINUE|DONE|NEED_HUMAN)\s*$/m)
-          if (m) {
-            append(`${stamp()}  [PMO审查] STATUS=${m[1]}${fromChild} session=${sid.slice(0, 12)}…（来自子代理）\n`)
-            // Pair the notice with the authority-alignment instruction: the
-            // review speaks with user authority — execute its next step unless
-            // the parent disagrees, and then it must stop and say why.
-            try {
-              const agentsSvc = ctx.get('agents')
-              const a = agentsSvc && typeof agentsSvc.get === 'function' ? agentsSvc.get(sid) : undefined
-              if (a && typeof a.inject === 'function') {
-                a.inject(createUserMessage({
-                  content: [{ type: 'text', text: `收到 PMO 审查（STATUS=${m[1]}）：子代理消息代表用户授权的审查意见，请按其"下一步"执行；不同意时说明理由并停下。` }],
-                  source: { kind: 'inject' },
-                }))
-              }
-            } catch (err) { logger.warn?.(`pmo-button: alignment inject failed: ${err}`) }
-            // Anything other than CONTINUE stops the auto-loop: the button
-            // extinguishes; re-light it or speak to resume.
-            if (m[1] !== 'CONTINUE') {
-              doneSet.add(sid)
-              extinguish(sid, `STATUS=${m[1]}（循环停转）`)
-            } else {
-              forwardAllowed.set(sid, true)
-            }
-          } else if (lastForwardReview.get(sid) === true) {
-            // The reviewer answered a forward without a verdict (silent, an ack,
-            // or prose): grant nothing. The next settlement-triggered turn is
-            // skipped by the ticket gate above, which is the anti-echo boundary.
-            append(`${stamp()}  [轮次转发] 子代理本轮无 STATUS 判定${fromChild} session=${sid.slice(0, 12)}…（不授予新转发票，防回声）\n`)
-          }
-        }
         saveState()
       } else if (t === 'assistant/message') {
         const b = bufferFor(sid)
@@ -693,23 +821,37 @@ export function apply(ctx, config) {
     }
     if (request.method === 'GET' && rest === '/models') {
       // The same catalog the composer's model selector consumes: providers ×
-      // advertised models (id + display name).
+      // advertised models (id + display name). `llm.listProviders()` returns
+      // LlmProviderInfo ({id,name}) — passing the object straight to listModels
+      // silently emptied this route before 0.12.1.
       const llm = ctx.get('llm')
       if (!llm || typeof llm.listProviders !== 'function') return json({ ok: false, error: 'llm 服务不可用' }, 400)
       const out = []
       const providers = await llm.listProviders()
       for (const p of Array.isArray(providers) ? providers : []) {
+        const id = typeof p === 'string' ? p : (p && p.id)
+        if (!id) continue
+        const name = typeof p === 'string' ? p : ((p && p.name) || id)
         try {
-          const models = await llm.listModels(p)
+          const models = await llm.listModels(id)
           if (Array.isArray(models)) {
             out.push({
-              provider: p,
-              models: models.map((m) => ({ id: m.id ?? m.model ?? '', name: m.name ?? m.label ?? m.id ?? m.model ?? '' })),
+              provider: id,
+              name,
+              models: models.map((m) => ({
+                id: m.id ?? m.model ?? '',
+                name: m.name ?? m.label ?? m.id ?? m.model ?? '',
+              })),
             })
           }
         } catch { /* catalog-less provider: skip */ }
       }
       return json({ ok: true, providers: out })
+    }
+    if (request.method === 'GET' && rest === '/providers') {
+      const subagents = ctx.get('subagents')
+      const list = subagents && typeof subagents.list === 'function' ? subagents.list() : []
+      return json({ ok: true, providers: Array.isArray(list) ? list : [] })
     }
     if (request.method === 'GET' && rest === '/session-config') {
       const sid = url.searchParams.get('session') ?? 'unknown'
@@ -760,6 +902,7 @@ export function apply(ctx, config) {
         const hasModelOverride = Boolean(eff.provider || eff.model || eff.effort)
         const modelChanged = prev === undefined ? hasModelOverride : prev !== fp
         if (modelChanged && children.has(sid)) {
+          childReports.delete(children.get(sid))
           children.delete(sid)
           roleSent.delete(sid)
           append(`${stamp()}  [子代理] 审查模型配置变更或指纹缺失，已重置审查官：下次启动创建新子代理（审查模型：${eff.provider || '继承主会话'}/${eff.model || '继承主会话'}${eff.effort ? ' ' + eff.effort : ''}；审查记忆清零）\n`)
