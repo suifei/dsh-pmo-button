@@ -1,5 +1,5 @@
 /**
- * PMO button — Client half v0.7.1.
+ * PMO button — Client half v0.7.3.
  * Red start/stop control in `conversation.input.right` (idle: neutral circle
  * with red arrow; armed: red circle with pulse animation) plus a liveness
  * strip in `conversation.composer.dock`. State is owned by the Host half via
@@ -12,7 +12,7 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const h = React.createElement;
     const BASE = '/pmo-button';
-    const VER = 'v0.7.1';
+    const VER = 'v0.7.3';
     let loadError = null;
     let t = { start: 'Start PMO automation', stop: 'PMO running: click to stop', busy: 'PMO: pending…', offline: 'PMO: host unreachable' };
 

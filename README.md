@@ -51,7 +51,7 @@ dsh plugin --profile <你的profile> add github:suifei/dsh-pmo-button
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
-| `logFile` | `pmo-button.log` | 轮次日志路径（建议绝对路径） |
+| `logFile` | `~/.dsh/logs/pmo-button.log` | 轮次日志路径（默认在 Harness home 下，可改绝对路径） |
 | `maxChars` | `4000` | 日志单块截断阈值（转发块为 2×） |
 | `provider` | `spawn` | 子代理提供方（`ctx.subagents` 注册名） |
 | `childLabel` | `PMO 子代理` | 持久子代理标签 |

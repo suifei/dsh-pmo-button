@@ -1,5 +1,5 @@
 /**
- * PMO button — Host half v0.7.1.
+ * PMO button — Host half v0.7.3.
  * Per-session armed set, turn buffers, child registry, and the once-per-session
  * identity-prompt flag are persisted (pmo-state.json), so restarts lose nothing.
  * The `session/event` feed drives two jobs for armed sessions:
@@ -15,6 +15,7 @@
  * batch-flushed, while session/event is the documented post-commit surface.
  */
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -53,7 +54,8 @@ const ROLE_PROMPT_DEFAULT = [
 
 /** @typedef {{ logFile: string, maxChars: number, provider: string, childLabel: string, greet: string, rolePrompt: string }} Config */
 export const Config = Schema.object({
-  logFile: Schema.string().default('pmo-button.log'),
+  /** Deterministic default: ~/.dsh/logs/pmo-button.log (cwd-relative defaults break on restarts). */
+  logFile: Schema.string().default(path.join(os.homedir(), '.dsh', 'logs', 'pmo-button.log')),
   maxChars: Schema.number().default(4000),
   /** Subagent provider name registered on ctx.subagents (spawn-in-process default). */
   provider: Schema.string().default('spawn'),
@@ -204,7 +206,7 @@ export function apply(ctx, config) {
   function sourceKind(data) {
     return data?.message?.source?.kind ?? data?.source?.kind ?? 'user'
   }
-  const OTHER_SOURCES = new Set(['inject', 'steering', 'time-context', 'agent-message', 'subagent-settled', 'system-reminder'])
+  const OTHER_SOURCES = new Set(['inject', 'steering', 'time-context', 'agent-message', 'subagent-settled', 'system-reminder', 'tool-jobs'])
   /** Compact summary of non-text content blocks (images, files, references). */
   function nonTextSummaries(data) {
     const m = data?.message ?? data
