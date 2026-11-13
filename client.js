@@ -1,5 +1,5 @@
 /**
- * PMO button — Client half v0.11.0.
+ * PMO button — Client half v0.11.1.
  * Visual contributions, all session-aware:
  *  - conversation.input.right: red start/stop control (idle neutral circle +
  *    red arrow; armed red circle with pulse) plus a chevron opening the
@@ -18,7 +18,7 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const h = React.createElement;
     const BASE = '/pmo-button';
-    const VER = 'v0.11.0';
+    const VER = 'v0.11.1';
     const EFFORTS = [
       ['', '继承主会话思考等级'],
       ['minimal', 'minimal（最小）'],

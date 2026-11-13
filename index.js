@@ -1,5 +1,5 @@
 /**
- * PMO button — Host half v0.11.0.
+ * PMO button — Host half v0.11.1.
  * Per-session armed set, turn buffers, child registry, and the once-per-session
  * identity-prompt flag are persisted (pmo-state.json), so restarts lose nothing.
  * The `session/event` feed drives two jobs for armed sessions:
@@ -106,8 +106,6 @@ export function apply(ctx, config) {
   const lastForwardReview = new Map()
   /** sid -> review rounds forwarded since the last user input (maxRounds cap) */
   const rounds = new Map()
-  /** persisted fingerprint of the child-model override triple (reset detector) */
-  let stateModelFp
   /** 'provider/model' -> display label (resolved via ctx.llm.listModels) */
   const labelCache = new Map()
 
@@ -168,13 +166,6 @@ export function apply(ctx, config) {
     }
     if (parsed?.rounds && typeof parsed.rounds === 'object') {
       for (const [sid, n] of Object.entries(parsed.rounds)) rounds.set(sid, Number(n) || 0)
-    }
-    if (typeof parsed?.modelFp === 'string') stateModelFp = parsed.modelFp
-    if (parsed?.modelFps && typeof parsed.modelFps === 'object') {
-      for (const [sid, f] of Object.entries(parsed.modelFps)) modelFps.set(sid, String(f))
-    }
-    if (parsed?.lastForwardReview && typeof parsed.lastForwardReview === 'object') {
-      for (const sid of Object.keys(parsed.lastForwardReview)) lastForwardReview.set(sid, true)
     }
   } catch { /* first run or unreadable state */ }
 
