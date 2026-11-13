@@ -63,42 +63,41 @@ window.__ModuleLoader__.load({
       'font-size:11px;color:var(--dsw-alias-label-secondary,#888);user-select:none}',
       '.pmo-strip .pmo-ok{width:7px;height:7px;border-radius:9999px;background:var(--dsw-alias-state-success-primary,#2ea043)}',
       '.pmo-strip .pmo-bad{width:7px;height:7px;border-radius:9999px;background:var(--dsw-alias-state-error-primary,#e5484d)}',
-      '.pmo-cfg{width:100%;max-width:760px;box-sizing:border-box;display:flex;flex-direction:column;gap:16px;padding:16px;',
+      '.pmo-cfg{width:100%;max-width:760px;box-sizing:border-box;display:flex;flex-direction:column;gap:18px;padding:18px;',
       'border:1px solid var(--dsw-alias-border-l1,#e2e2e6);border-radius:12px;background:var(--dsw-alias-bg-layer-1,#fff);',
-      'color:var(--dsw-alias-label-primary,#222);font:inherit;font-size:13px;line-height:1.45}',
-      '.pmo-cfg-section{display:flex;flex-direction:column;gap:8px}',
-      '.pmo-cfg-sectitle{font-weight:600;font-size:13px;color:var(--dsw-alias-label-primary,#222);',
-      'border-bottom:1px solid var(--dsw-alias-border-l1,#eee);padding-bottom:5px}',
-      '.pmo-cfg-row{display:grid;grid-template-columns:180px minmax(0,1fr);gap:12px;align-items:center}',
+      'color:var(--dsw-alias-label-primary,#222);font:inherit;font-size:13px;line-height:1.5}',
+      '.pmo-cfg-section{display:flex;flex-direction:column;gap:10px}',
+      '.pmo-cfg-sectitle{font-weight:600;font-size:13px;color:var(--dsw-alias-label-primary,#222);padding-bottom:2px}',
+      '.pmo-cfg-row{display:grid;grid-template-columns:minmax(140px,180px) minmax(0,1fr);gap:12px;align-items:center}',
       '.pmo-cfg-row.pmo-wide{display:flex;flex-direction:column;align-items:stretch;gap:6px}',
-      '.pmo-cfg-label{font-size:12px;color:var(--dsw-alias-label-secondary,#666);line-height:1.4}',
-      '.pmo-cfg-input{width:100%;min-width:0;box-sizing:border-box;height:30px;padding:4px 8px;border:1px solid var(--dsw-alias-border-l1,#ccc);',
-      'border-radius:7px;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#222);',
-      'font:inherit;font-size:12.5px}',
+      '.pmo-cfg-label{font-size:12px;color:var(--dsw-alias-label-secondary,#666);line-height:1.45}',
+      '.pmo-cfg-input{width:100%;min-width:0;box-sizing:border-box;height:32px;padding:4px 10px;border:1px solid var(--dsw-alias-border-l1,#ccc);',
+      'border-radius:8px;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#222);',
+      'font:inherit;font-size:13px}',
       'select.pmo-cfg-input{appearance:auto;cursor:pointer}',
-      'textarea.pmo-cfg-input{height:auto;min-height:96px;padding:8px;resize:vertical;line-height:1.5}',
+      'textarea.pmo-cfg-input{height:auto;min-height:96px;padding:8px 10px;resize:vertical;line-height:1.5}',
       '.pmo-cfg-input:focus{outline:2px solid var(--dsw-alias-brand-primary,#4a7dd8);outline-offset:0}',
-      '.pmo-cfg-note{font-size:11px;color:var(--dsw-alias-label-secondary,#888);line-height:1.45}',
+      '.pmo-cfg-note{font-size:11.5px;color:var(--dsw-alias-label-secondary,#888);line-height:1.5}',
       '.pmo-cfg-status{min-height:16px;font-size:11.5px;color:var(--dsw-alias-label-secondary,#888)}',
-      '.pmo-menu{position:fixed;z-index:99999;width:400px;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);overflow:auto;',
-      'padding:14px;display:flex;flex-direction:column;gap:10px;border-radius:12px;background:var(--dsw-alias-bg-overlay,#fff);',
-      'border:1px solid var(--dsw-alias-border-l2,#c9c9cf);box-shadow:0 12px 32px rgba(0,0,0,.24);',
-      'color:var(--dsw-alias-label-primary,#222);font:inherit;font-size:12.5px;line-height:1.45}',
+      '.pmo-menu{position:fixed;z-index:99999;width:388px;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);overflow:auto;',
+      'padding:14px;display:flex;flex-direction:column;gap:12px;border-radius:12px;background:var(--dsw-alias-bg-overlay,#fff);',
+      'border:1px solid var(--dsw-alias-border-l2,#c9c9cf);box-shadow:0 12px 32px rgba(0,0,0,.18);',
+      'color:var(--dsw-alias-label-primary,#222);font:inherit;font-size:13px;line-height:1.5}',
       '.pmo-menu-head{display:flex;align-items:center;justify-content:space-between;gap:8px}',
       '.pmo-menu-title{font-weight:600;font-size:13px}',
       '.pmo-menu-close{width:24px;height:24px;margin:0;padding:0;border:0;border-radius:6px;background:transparent;',
       'color:var(--dsw-alias-label-secondary,#888);font-size:16px;line-height:1;cursor:pointer}',
       '.pmo-menu-close:hover{background:var(--dsw-alias-bg-layer-2,#eee);color:var(--dsw-alias-label-primary,#222)}',
-      '.pmo-menu-sub{font-size:11px;color:var(--dsw-alias-label-secondary,#888);line-height:1.45}',
+      '.pmo-menu-sub{font-size:11.5px;color:var(--dsw-alias-label-secondary,#888);line-height:1.5}',
       '.pmo-menu-row{display:grid;grid-template-columns:84px minmax(0,1fr);gap:10px;align-items:center}',
       '.pmo-menu-label{font-size:12px;color:var(--dsw-alias-label-secondary,#666)}',
-      '.pmo-menu-select,.pmo-menu-input{width:100%;min-width:0;box-sizing:border-box;height:28px;padding:3px 6px;',
-      'border:1px solid var(--dsw-alias-border-l1,#ccc);border-radius:6px;background:var(--dsw-alias-bg-base,#fff);',
-      'color:var(--dsw-alias-label-primary,#222);font:inherit;font-size:12.5px}',
+      '.pmo-menu-select,.pmo-menu-input{width:100%;min-width:0;box-sizing:border-box;height:30px;padding:3px 8px;',
+      'border:1px solid var(--dsw-alias-border-l1,#ccc);border-radius:8px;background:var(--dsw-alias-bg-base,#fff);',
+      'color:var(--dsw-alias-label-primary,#222);font:inherit;font-size:13px}',
       '.pmo-menu-select{cursor:pointer}',
-      '.pmo-menu-hint{grid-column:2;font-size:11px;color:var(--dsw-alias-label-secondary,#888);line-height:1.4;margin-top:-4px}',
+      '.pmo-menu-hint{grid-column:2;font-size:11px;color:var(--dsw-alias-label-secondary,#888);line-height:1.45;margin-top:-4px}',
       '.pmo-menu-status{min-height:16px;font-size:11.5px;color:var(--dsw-alias-state-success-primary,#2ea043)}',
-      '.pmo-menu-foot{font-size:10.5px;color:var(--dsw-alias-label-secondary,#999);line-height:1.45;',
+      '.pmo-menu-foot{font-size:11px;color:var(--dsw-alias-label-secondary,#999);line-height:1.5;',
       'border-top:1px solid var(--dsw-alias-border-l1,#eee);padding-top:8px}',
     ].join('');
 
@@ -185,7 +184,7 @@ window.__ModuleLoader__.load({
       m.appendChild(menuRow(t.rounds, inR, hintR));
       const status = el('div', 'pmo-menu-status');
       m.appendChild(status);
-      m.appendChild(el('div', 'pmo-menu-foot', t.menuSub));
+      m.appendChild(el('div', 'pmo-menu-foot', VER + ' · 会话级覆盖优先于全局，修改后立即生效'));
       document.body.appendChild(m);
 
       const r = anchor && anchor.getBoundingClientRect
@@ -251,7 +250,15 @@ window.__ModuleLoader__.load({
             wantCombo = ov.provider + '|' + ov.model;
             selM.value = wantCombo;
           }
-          if (ov.effort) selE.value = ov.effort;
+          if (ov.effort) {
+            const hasEffort = Array.prototype.some.call(selE.options, function (o) { return o.value === ov.effort; });
+            if (!hasEffort) {
+              const op = el('option', null, ov.effort);
+              op.value = ov.effort;
+              selE.appendChild(op);
+            }
+            selE.value = ov.effort;
+          }
           if (ov.maxRounds !== undefined) inR.value = String(ov.maxRounds);
         })
         .catch(function () { });
@@ -272,7 +279,15 @@ window.__ModuleLoader__.load({
             }
             selM.appendChild(og);
           }
-          if (wantCombo) selM.value = wantCombo;
+          if (wantCombo) {
+            const foundCombo = Array.prototype.some.call(selM.options, function (o) { return o.value === wantCombo; });
+            if (!foundCombo) {
+              const op = el('option', null, wantCombo);
+              op.value = wantCombo;
+              selM.appendChild(op);
+            }
+            selM.value = wantCombo;
+          }
         })
         .catch(function () { });
 
@@ -482,12 +497,15 @@ window.__ModuleLoader__.load({
         }
         function effortField() {
           const value = view.cfg && view.cfg.childReasoningEffort ? String(view.cfg.childReasoningEffort) : '';
+          const known = EFFORTS.some(function (o) { return o[0] === value; });
+          const opts = EFFORTS.map(function (o) { return h('option', { value: o[0], key: o[0] || 'inherit' }, o[1]); });
+          if (value && !known) opts.push(h('option', { value: value, key: 'current' }, value));
           return h('label', { className: 'pmo-cfg-row', key: 'childReasoningEffort' },
             h('span', { className: 'pmo-cfg-label' }, '思考等级'),
             h('select', {
               className: 'pmo-cfg-input', value: value,
               onChange: function (e) { saveFields({ childReasoningEffort: e.target.value }); },
-            }, ...EFFORTS.map(function (o) { return h('option', { value: o[0], key: o[0] || 'inherit' }, o[1]); })));
+            }, ...opts));
         }
         function providerField() {
           const value = view.cfg && view.cfg.provider ? String(view.cfg.provider) : 'spawn';
@@ -501,8 +519,13 @@ window.__ModuleLoader__.load({
             }, ...list.map(function (p) { return h('option', { value: p, key: p }, p); })));
         }
 
-        if (!view.loaded) return h('div', { className: 'pmo-cfg' }, h('span', { className: 'pmo-cfg-note' }, 'PMO 配置加载中…'));
+        if (!view.loaded) {
+          return h('div', { className: 'pmo-cfg' },
+            h('style', null, CSS),
+            h('span', { className: 'pmo-cfg-note' }, 'PMO 配置加载中…'));
+        }
         return h('div', { className: 'pmo-cfg' },
+          h('style', null, CSS),
           h('div', { className: 'pmo-cfg-section' },
             h('div', { className: 'pmo-cfg-sectitle' }, '审查模型（异构审查：审查方 ≠ 执行方）'),
             modelField(),
@@ -532,7 +555,9 @@ window.__ModuleLoader__.load({
       return {
         inject: ['slots'],
         apply(c) {
-          t = pickDict(c.get ? c.get('locale') : null);
+          // Merge, never replace: pickDict only carries the four runtime
+          // strings, and replacing `t` blanked the menu title/labels.
+          t = Object.assign({}, t, pickDict(c.get ? c.get('locale') : null));
           c.slots.inject('plugins.bundle.config', function () {
             return c.slots.register(
               { name: 'plugins.bundle.config', key: '@suifei/dsh-pmo-button' },
