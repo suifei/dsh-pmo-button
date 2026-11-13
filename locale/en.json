@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "PMO button",
+    "description": "A red start/stop button beside the composer submit action; state follows the Session. While enabled, every turn end (each loop round) and goal pause/completion is read back from the session log — this turn's tasks and the final handoff — and appended to a log file."
+  }
+}

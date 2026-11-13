@@ -1,0 +1,7 @@
+- insert:
+    - id: pmo-button
+      name: '@suifei/dsh-pmo-button'
+      config:
+        logFile: 'E:\works\dsh-button\logs\pmo-button.log'
+        maxChars: 4000
+        greet: 'hi'
