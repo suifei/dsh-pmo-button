@@ -1,5 +1,5 @@
 /**
- * PMO button — Host half v0.8.0.
+ * PMO button — Host half v0.8.1.
  * Per-session armed set, turn buffers, child registry, and the once-per-session
  * identity-prompt flag are persisted (pmo-state.json), so restarts lose nothing.
  * The `session/event` feed drives two jobs for armed sessions:
@@ -98,6 +98,8 @@ export function apply(ctx, config) {
   const stopped = new Set()
   /** sid -> review rounds forwarded since the last user input (maxRounds cap) */
   const rounds = new Map()
+  /** persisted fingerprint of the child-model override triple (reset detector) */
+  let stateModelFp
   /** 'provider/model' -> display label (resolved via ctx.llm.listModels) */
   const labelCache = new Map()
 
@@ -148,13 +150,14 @@ export function apply(ctx, config) {
     if (parsed?.rounds && typeof parsed.rounds === 'object') {
       for (const [sid, n] of Object.entries(parsed.rounds)) rounds.set(sid, Number(n) || 0)
     }
+    if (typeof parsed?.modelFp === 'string') stateModelFp = parsed.modelFp
   } catch { /* first run or unreadable state */ }
 
   function saveState() {
     const kept = {}
     for (const [sid, b] of buffers) if (enabled.has(sid)) kept[sid] = b
     const doc = {
-      version: 7,
+      version: 8,
       enabled: [...enabled],
       turnCounts: Object.fromEntries(turnCounts),
       buffers: kept,
@@ -163,6 +166,7 @@ export function apply(ctx, config) {
       doneSet: Object.fromEntries([...doneSet.keys()].map((sid) => [sid, true])),
       stopped: Object.fromEntries([...stopped.keys()].map((sid) => [sid, true])),
       rounds: Object.fromEntries(rounds),
+      modelFp: stateModelFp,
     }
     try {
       fs.mkdirSync(path.dirname(statePath), { recursive: true })
@@ -437,7 +441,7 @@ export function apply(ctx, config) {
         b.effort = undefined
       } else if (t === 'user/message') {
         const b = bufferFor(sid)
-        const text = textOf(event.data)
+        const text = redact(textOf(event.data))
         // Harness system reminders (skill-catalog snapshots etc.) arrive as
         // user-role messages without a distinguishing source kind; classify
         // them by their text marker instead of defaulting to user input.
@@ -477,7 +481,7 @@ export function apply(ctx, config) {
         saveState()
       } else if (t === 'assistant/message') {
         const b = bufferFor(sid)
-        const text = textOf(event.data)
+        const text = redact(textOf(event.data))
         if (text) b.texts.push(text)
         const src = event.data?.message?.source ?? event.data?.source
         if (src && src.kind === 'model' && src.provider && src.model) {
@@ -560,6 +564,16 @@ export function apply(ctx, config) {
         on = Boolean(body?.enabled)
       }
       if (on) {
+        // A changed model override invalidates the existing child: its model
+        // is baked into the durable descriptor, so reset to a fresh child
+        // (review memory clears — documented trade-off).
+        const fp = JSON.stringify([config.childModelProvider, config.childModel, config.childReasoningEffort])
+        if (stateModelFp !== undefined && stateModelFp !== fp && children.has(sid)) {
+          children.delete(sid)
+          roleSent.delete(sid)
+          append(`${stamp()}  [子代理] 模型配置变更，已重置审查官：下次启动创建新子代理（新审查模型：${config.childModelProvider || '继承主会话'}/${config.childModel || '继承主会话'}${config.childReasoningEffort ? ' ' + config.childReasoningEffort : ''}；审查记忆清零）\n`)
+        }
+        stateModelFp = fp
         enabled.add(sid)
         turnCounts.set(sid, turnCounts.get(sid) ?? 0)
         stopped.delete(sid)
