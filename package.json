@@ -1,6 +1,6 @@
 {
   "name": "@suifei/dsh-pmo-button",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "PMO 审查循环按钮 for DeepSeek Harness — 持久审查子代理 + 轮次转发 + STATUS 协议（CONTINUE/DONE/NEED_HUMAN）自动循环推进",
   "keywords": [
     "deepseek-harness", "dsh", "dsh-plugin", "pmo", "code-review",

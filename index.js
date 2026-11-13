@@ -1,5 +1,5 @@
 /**
- * PMO button — Host half v0.8.1.
+ * PMO button — Host half v0.9.0.
  * Per-session armed set, turn buffers, child registry, and the once-per-session
  * identity-prompt flag are persisted (pmo-state.json), so restarts lose nothing.
  * The `session/event` feed drives two jobs for armed sessions:
@@ -550,6 +550,31 @@ export function apply(ctx, config) {
         enabled: enabled.has(sid) && !stopped.has(sid),
         turns: turnCounts.get(sid) ?? 0,
       })
+    }
+    if (request.method === 'GET' && rest === '/config') {
+      const editor = ctx.get('configEditor')
+      return json({ ok: true, config: { ...config }, editorAvailable: editor !== void 0 })
+    }
+    if (request.method === 'GET' && rest === '/config/save') {
+      // Persisted through the configEditor user layer (survives upgrades) and
+      // validated by the same Schemastery schema the Loader applies. GET with
+      // query params: the desktop shell was observed to drop same-origin POSTs.
+      const editor = ctx.get('configEditor')
+      const entry = ctx.fiber && ctx.fiber.entry !== undefined ? ctx.fiber.entry : undefined
+      if (!editor || entry === undefined) return json({ ok: false, error: '当前部署不支持持久配置保存' }, 400)
+      const q = url.searchParams
+      const patch = {}
+      if (q.has('maxRounds')) patch.maxRounds = Math.max(0, Math.floor(Number(q.get('maxRounds')) || 0))
+      if (q.has('maxChars')) patch.maxChars = Math.max(200, Math.floor(Number(q.get('maxChars')) || 4000))
+      for (const k of ['logFile', 'provider', 'childLabel', 'greet', 'rolePrompt', 'childModelProvider', 'childModel', 'childReasoningEffort']) {
+        if (q.has(k)) patch[k] = String(q.get(k))
+      }
+      let validated
+      try { validated = Config({ ...config, ...patch }) } catch (err) {
+        return json({ ok: false, error: String((err && err.message) || err) }, 400)
+      }
+      await editor.edit(entry, () => ({ ...validated }))
+      return json({ ok: true, config: validated })
     }
     if (rest === '/toggle') {
       let sid, on

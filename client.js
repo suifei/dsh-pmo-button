@@ -1,5 +1,5 @@
 /**
- * PMO button — Client half v0.8.1.
+ * PMO button — Client half v0.9.0 (button + liveness strip + config panel).
  * Red start/stop control in `conversation.input.right` (idle: neutral circle
  * with red arrow; armed: red circle with pulse animation) plus a liveness
  * strip in `conversation.composer.dock`. State is owned by the Host half via
@@ -12,7 +12,7 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const h = React.createElement;
     const BASE = '/pmo-button';
-    const VER = 'v0.8.1';
+    const VER = 'v0.9.0';
     let loadError = null;
     let t = { start: 'Start PMO automation', stop: 'PMO running: click to stop', busy: 'PMO: pending…', offline: 'PMO: host unreachable' };
 
@@ -33,6 +33,22 @@ window.__ModuleLoader__.load({
       'font-size:11px;color:var(--dsw-alias-label-secondary,#888);user-select:none}',
       '.pmo-strip .pmo-ok{width:7px;height:7px;border-radius:9999px;background:var(--dsw-alias-state-success-primary,#2ea043)}',
       '.pmo-strip .pmo-bad{width:7px;height:7px;border-radius:9999px;background:var(--dsw-alias-state-error-primary,#e5484d)}',
+      '.pmo-cfg{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1,#ddd);',
+      'border-radius:8px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#222);',
+      'font-size:12px;max-width:720px}',
+      '.pmo-cfg-title{font-weight:600;font-size:12px}',
+      '.pmo-cfg-note{color:var(--dsw-alias-label-secondary,#888)}',
+      '.pmo-cfg-row{display:grid;grid-template-columns:150px 1fr;gap:8px;align-items:center}',
+      '.pmo-cfg-row textarea{grid-column:1 / -1;min-height:72px;resize:vertical}',
+      '.pmo-cfg-label{color:var(--dsw-alias-label-secondary,#666)}',
+      '.pmo-cfg-input{width:100%;box-sizing:border-box;padding:4px 8px;border:1px solid var(--dsw-alias-border-l1,#ccc);',
+      'border-radius:6px;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#222);',
+      'font:inherit;font-size:12px}',
+      '.pmo-cfg-input:focus{outline:1px solid var(--dsw-alias-brand-primary,#4a7dd8)}',
+      '.pmo-cfg-save{align-self:flex-start;padding:4px 14px;border:0;border-radius:6px;cursor:pointer;',
+      'background:var(--dsw-alias-brand-primary,#4a7dd8);color:#fff;font:inherit;font-size:12px}',
+      '.pmo-cfg-save:disabled{opacity:.5;cursor:default}',
+      '.pmo-cfg-status{color:var(--dsw-alias-label-secondary,#888)}',
     ].join('');
 
     function pickDict(localeSvc) {
@@ -142,10 +158,74 @@ window.__ModuleLoader__.load({
         return h('div', { className: 'pmo-strip' }, h('span', { className: 'pmo-ok' }), 'PMO ' + VER + ' client 已加载 ' + now);
       }
 
+      const CFG_FIELDS = [
+        ['maxRounds', '审查轮数上限（0 = 不限）', 'number'],
+        ['greet', '启动问候文本'],
+        ['childLabel', '子代理标签'],
+        ['provider', '子代理提供方（spawn）'],
+        ['childModelProvider', '审查模型提供方（空 = 继承主会话）'],
+        ['childModel', '审查模型（空 = 继承主会话）'],
+        ['childReasoningEffort', '审查思考等级（空 = 继承主会话）'],
+        ['maxChars', '日志单块截断阈值', 'number'],
+        ['logFile', '日志文件路径'],
+        ['rolePrompt', '身份提示词（每会话仅发一次；置空禁用）', 'textarea'],
+      ];
+
+      function ConfigPanel() {
+        const st = React.useState({ loaded: false, cfg: {}, editor: true, saving: false, msg: '' });
+        const view = st[0]; const set = st[1];
+        const refs = React.useRef({});
+        React.useEffect(function () {
+          let dead = false;
+          fetch(BASE + '/config')
+            .then(function (r) { return r.json(); })
+            .then(function (body) {
+              if (!dead && body && body.ok) set(function (s) { return Object.assign({}, s, { loaded: true, cfg: body.config || {}, editor: body.editorAvailable !== false }); });
+            })
+            .catch(function () { if (!dead) set(function (s) { return Object.assign({}, s, { loaded: true, cfg: {}, editor: false }); }); });
+          return function () { dead = true; };
+        }, []);
+        function row(f) {
+          const val = view.cfg && view.cfg[f[0]] !== undefined && view.cfg[f[0]] !== null ? String(view.cfg[f[0]]) : '';
+          const attrs = { className: 'pmo-cfg-input', type: f[2] === 'number' ? 'number' : 'text', defaultValue: val, ref: function (el) { refs.current[f[0]] = el; } };
+          return h('label', { className: 'pmo-cfg-row', key: f[0] },
+            h('span', { className: 'pmo-cfg-label' }, f[1]),
+            f[2] === 'textarea'
+              ? h('textarea', { className: 'pmo-cfg-input', defaultValue: val, ref: function (el) { refs.current[f[0]] = el; } })
+              : h('input', attrs),
+          );
+        }
+        function save() {
+          set(function (s) { return Object.assign({}, s, { saving: true, msg: '' }); });
+          const q = new URLSearchParams();
+          CFG_FIELDS.forEach(function (f) { q.set(f[0], (refs.current[f[0]] && refs.current[f[0]].value) || ''); });
+          fetch(BASE + '/config/save?' + q.toString())
+            .then(function (r) { return r.json(); })
+            .then(function (body) {
+              if (body && body.ok) set(function (s) { return Object.assign({}, s, { saving: false, msg: '已保存 ✓（配置热生效）' }); });
+              else set(function (s) { return Object.assign({}, s, { saving: false, msg: '保存失败：' + ((body && body.error) || '未知') }); });
+            })
+            .catch(function () { set(function (s) { return Object.assign({}, s, { saving: false, msg: '连接中断——配置可能已保存，请刷新本页验证' }); }); });
+        }
+        if (!view.loaded) return h('div', { className: 'pmo-cfg' }, h('span', { className: 'pmo-cfg-note' }, 'PMO 配置加载中…'));
+        return h('div', { className: 'pmo-cfg' },
+          h('div', { className: 'pmo-cfg-title' }, 'PMO 按钮配置' + (view.editor ? '' : '（当前部署不支持持久保存，仅展示）')),
+          CFG_FIELDS.map(row),
+          h('button', { className: 'pmo-cfg-save', disabled: view.saving || !view.editor, onClick: save }, view.saving ? '保存中…' : '保存配置'),
+          h('span', { className: 'pmo-cfg-status' }, view.msg || '保存后配置热生效；审查模型变更将在下次启动时重置子代理（审查记忆清零）'),
+        );
+      }
+
       return {
         inject: ['slots'],
         apply(c) {
           t = pickDict(c.get ? c.get('locale') : null);
+          c.slots.inject('plugins.bundle.config', function () {
+            return c.slots.register(
+              { name: 'plugins.bundle.config', key: '@suifei/dsh-pmo-button' },
+              ConfigPanel,
+            );
+          });
           c.slots.inject('conversation.composer.dock', function () {
             return c.slots.register(
               { name: 'conversation.composer.dock', id: 'pmo-button-strip', order: 90 },
