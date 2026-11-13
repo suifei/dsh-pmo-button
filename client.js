@@ -1,13 +1,13 @@
 /**
  * PMO button — Client half v0.12.0.
  * Visual contributions, all session-aware:
- *  - conversation.input.right: red start/stop control (idle neutral circle +
- *    red arrow; armed red circle with pulse) plus a chevron opening the
- *    session-level quick menu (review model / effort / round-cap overrides).
+ *  - conversation.input.right: ONE control (red start/stop button + a visible
+ *    caret that opens the session-level quick menu). The control is a single
+ *    slot occupant; the menu is session-scoped.
  *  - conversation.composer.dock: liveness strip.
  *  - plugins.bundle.config: global config panel on the bundle page with
- *    semantic widgets (model/effort dropdowns, number inputs, textarea) and
- *    per-field auto-save through /config/save (configEditor user layer).
+ *    aligned rows and semantic widgets (model/effort/provider dropdowns,
+ *    number inputs, textareas) and per-field auto-save through /config/save.
  * Session-level overrides live in the Host's pmo-state.json and only affect
  * the current session; global fields persist for every session.
  * Everything talks to the package-private /pmo-button/* same-origin routes.
@@ -30,16 +30,18 @@ window.__ModuleLoader__.load({
     let loadError = null;
     let t = {
       start: 'PMO：启动自动化', stop: 'PMO：运行中，点击停止', busy: 'PMO：处理中…', offline: 'PMO：宿主未响应',
-      menuTitle: '会话级审查设置', model: '审查模型', effort: '思考等级', rounds: '轮数上限（空 = 全局）',
+      menuTitle: '会话级审查设置', menuSub: '只影响当前会话；全局默认在 插件 → PMO 按钮 页面配置',
+      model: '审查模型', effort: '思考等级', rounds: '轮数上限',
       inheritModel: '继承主会话模型', inheritEffort: '继承主会话思考等级',
-      loading: '加载中…', saved: '已保存 ✓（对本会话立即生效）', fail: '保存失败',
-      foot: '会话级覆盖仅影响当前会话；全局默认在 插件 → PMO 按钮 页面配置',
+      roundsHint: '留空 = 继承全局', saved: '已保存 ✓（对本会话立即生效）', fail: '保存失败',
+      close: '关闭', menuAria: '会话级审查设置',
     };
 
     let menuEl = null;
     let menuCleanup = null;
 
     const CSS = [
+      '.pmo-ctl{display:inline-flex;align-items:center;gap:2px;flex:0 0 auto}',
       '.pmo-btn{position:relative;flex:0 0 auto;width:32px;height:32px;margin:0;padding:0;border:0;border-radius:9999px;',
       'background:var(--dsw-alias-bg-layer-2,#e8e8ea);color:var(--dsw-alias-state-error-primary,#e5484d);display:inline-flex;',
       'align-items:center;justify-content:center;cursor:pointer;transition:background .15s ease,color .15s ease,transform .15s ease}',
@@ -52,52 +54,52 @@ window.__ModuleLoader__.load({
       '.pmo-btn.pmo-on:hover{filter:brightness(.92)}',
       '@keyframes pmo-work{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}',
       '@media (prefers-reduced-motion:reduce){.pmo-btn.pmo-on{animation:none}}',
-      '.pmo-menu-btn{position:relative;flex:0 0 auto;width:16px;height:28px;margin:0 -2px 0 0;padding:0;border:0;background:transparent;',
-      'color:var(--dsw-alias-label-secondary,#888);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;',
-      'font-size:10px;line-height:1}',
-      '.pmo-menu-btn:hover{color:var(--dsw-alias-label-primary,#333)}',
+      '.pmo-caret-btn{flex:0 0 auto;width:22px;height:32px;margin:0;padding:0;border:0;border-radius:8px;background:transparent;',
+      'color:var(--dsw-alias-label-secondary,#7a7a80);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;',
+      'font-size:11px;line-height:1;transition:background .15s ease,color .15s ease}',
+      '.pmo-caret-btn:hover{background:var(--dsw-alias-bg-layer-2,#e8e8ea);color:var(--dsw-alias-label-primary,#222)}',
+      '.pmo-caret-btn:focus-visible{outline:2px solid currentColor;outline-offset:1px}',
       '.pmo-strip{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:2px 10px;',
       'font-size:11px;color:var(--dsw-alias-label-secondary,#888);user-select:none}',
       '.pmo-strip .pmo-ok{width:7px;height:7px;border-radius:9999px;background:var(--dsw-alias-state-success-primary,#2ea043)}',
       '.pmo-strip .pmo-bad{width:7px;height:7px;border-radius:9999px;background:var(--dsw-alias-state-error-primary,#e5484d)}',
-      '.pmo-cfg{display:flex;flex-direction:column;gap:10px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l1,#ddd);',
-      'border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#222);',
-      'font-size:12px;max-width:680px}',
-      '.pmo-cfg-sectitle{font-weight:600;font-size:12px;color:var(--dsw-alias-label-primary,#333);',
-      'border-bottom:1px solid var(--dsw-alias-border-l1,#eee);padding-bottom:4px}',
-      '.pmo-cfg-row{display:grid;grid-template-columns:180px 1fr;gap:10px;align-items:center}',
-      '.pmo-cfg-row.pmo-wide{display:block}',
-      '.pmo-cfg-row.pmo-wide .pmo-cfg-label{display:block;margin-bottom:4px}',
-      '.pmo-cfg-label{color:var(--dsw-alias-label-secondary,#666)}',
-      '.pmo-cfg-input{width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid var(--dsw-alias-border-l1,#ccc);',
-      'border-radius:6px;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#222);',
-      'font:inherit;font-size:12px}',
-      'textarea.pmo-cfg-input{min-height:80px;resize:vertical}',
-      '.pmo-cfg-input:focus{outline:1px solid var(--dsw-alias-brand-primary,#4a7dd8)}',
-      '.pmo-cfg-status{color:var(--dsw-alias-label-secondary,#888);min-height:14px}',
-      '.pmo-menu{position:fixed;z-index:99999;min-width:320px;max-width:380px;padding:12px;display:flex;flex-direction:column;gap:9px;',
-      'border-radius:10px;background:var(--dsw-alias-bg-overlay,#fff);border:1px solid var(--dsw-alias-border-l2,#c9c9cf);',
-      'box-shadow:0 10px 28px rgba(0,0,0,.22);color:var(--dsw-alias-label-primary,#222);font-size:12px}',
-      '.pmo-menu-title{font-weight:600}',
-      '.pmo-menu-row{display:grid;grid-template-columns:96px 1fr;gap:8px;align-items:center}',
-      '.pmo-menu-label{color:var(--dsw-alias-label-secondary,#666)}',
-      '.pmo-menu-select,.pmo-menu-input{width:100%;box-sizing:border-box;padding:4px 6px;border:1px solid var(--dsw-alias-border-l1,#ccc);',
-      'border-radius:6px;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#222);font:inherit;font-size:12px}',
-      '.pmo-menu-status{color:var(--dsw-alias-state-success-primary,#2ea043);min-height:14px}',
-      '.pmo-menu-foot{color:var(--dsw-alias-label-secondary,#999);font-size:11px}',
-    ].join('');
-
-    const MENU_CSS = [
-      '.pmo-menu{position:fixed;z-index:99999;min-width:320px;max-width:380px;padding:12px;display:flex;flex-direction:column;gap:9px;',
-      'border-radius:10px;background:var(--dsw-alias-bg-overlay,#fff);border:1px solid var(--dsw-alias-border-l2,#c9c9cf);',
-      'box-shadow:0 10px 28px rgba(0,0,0,.22);color:var(--dsw-alias-label-primary,#222);font-size:12px}',
-      '.pmo-menu-title{font-weight:600}',
-      '.pmo-menu-row{display:grid;grid-template-columns:96px 1fr;gap:8px;align-items:center}',
-      '.pmo-menu-label{color:var(--dsw-alias-label-secondary,#666)}',
-      '.pmo-menu-select,.pmo-menu-input{width:100%;box-sizing:border-box;padding:4px 6px;border:1px solid var(--dsw-alias-border-l1,#ccc);',
-      'border-radius:6px;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#222);font:inherit;font-size:12px}',
-      '.pmo-menu-status{color:var(--dsw-alias-state-success-primary,#2ea043);min-height:14px}',
-      '.pmo-menu-foot{color:var(--dsw-alias-label-secondary,#999);font-size:11px}',
+      '.pmo-cfg{width:100%;max-width:760px;box-sizing:border-box;display:flex;flex-direction:column;gap:16px;padding:16px;',
+      'border:1px solid var(--dsw-alias-border-l1,#e2e2e6);border-radius:12px;background:var(--dsw-alias-bg-layer-1,#fff);',
+      'color:var(--dsw-alias-label-primary,#222);font:inherit;font-size:13px;line-height:1.45}',
+      '.pmo-cfg-section{display:flex;flex-direction:column;gap:8px}',
+      '.pmo-cfg-sectitle{font-weight:600;font-size:13px;color:var(--dsw-alias-label-primary,#222);',
+      'border-bottom:1px solid var(--dsw-alias-border-l1,#eee);padding-bottom:5px}',
+      '.pmo-cfg-row{display:grid;grid-template-columns:180px minmax(0,1fr);gap:12px;align-items:center}',
+      '.pmo-cfg-row.pmo-wide{display:flex;flex-direction:column;align-items:stretch;gap:6px}',
+      '.pmo-cfg-label{font-size:12px;color:var(--dsw-alias-label-secondary,#666);line-height:1.4}',
+      '.pmo-cfg-input{width:100%;min-width:0;box-sizing:border-box;height:30px;padding:4px 8px;border:1px solid var(--dsw-alias-border-l1,#ccc);',
+      'border-radius:7px;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#222);',
+      'font:inherit;font-size:12.5px}',
+      'select.pmo-cfg-input{appearance:auto;cursor:pointer}',
+      'textarea.pmo-cfg-input{height:auto;min-height:96px;padding:8px;resize:vertical;line-height:1.5}',
+      '.pmo-cfg-input:focus{outline:2px solid var(--dsw-alias-brand-primary,#4a7dd8);outline-offset:0}',
+      '.pmo-cfg-note{font-size:11px;color:var(--dsw-alias-label-secondary,#888);line-height:1.45}',
+      '.pmo-cfg-status{min-height:16px;font-size:11.5px;color:var(--dsw-alias-label-secondary,#888)}',
+      '.pmo-menu{position:fixed;z-index:99999;width:400px;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);overflow:auto;',
+      'padding:14px;display:flex;flex-direction:column;gap:10px;border-radius:12px;background:var(--dsw-alias-bg-overlay,#fff);',
+      'border:1px solid var(--dsw-alias-border-l2,#c9c9cf);box-shadow:0 12px 32px rgba(0,0,0,.24);',
+      'color:var(--dsw-alias-label-primary,#222);font:inherit;font-size:12.5px;line-height:1.45}',
+      '.pmo-menu-head{display:flex;align-items:center;justify-content:space-between;gap:8px}',
+      '.pmo-menu-title{font-weight:600;font-size:13px}',
+      '.pmo-menu-close{width:24px;height:24px;margin:0;padding:0;border:0;border-radius:6px;background:transparent;',
+      'color:var(--dsw-alias-label-secondary,#888);font-size:16px;line-height:1;cursor:pointer}',
+      '.pmo-menu-close:hover{background:var(--dsw-alias-bg-layer-2,#eee);color:var(--dsw-alias-label-primary,#222)}',
+      '.pmo-menu-sub{font-size:11px;color:var(--dsw-alias-label-secondary,#888);line-height:1.45}',
+      '.pmo-menu-row{display:grid;grid-template-columns:84px minmax(0,1fr);gap:10px;align-items:center}',
+      '.pmo-menu-label{font-size:12px;color:var(--dsw-alias-label-secondary,#666)}',
+      '.pmo-menu-select,.pmo-menu-input{width:100%;min-width:0;box-sizing:border-box;height:28px;padding:3px 6px;',
+      'border:1px solid var(--dsw-alias-border-l1,#ccc);border-radius:6px;background:var(--dsw-alias-bg-base,#fff);',
+      'color:var(--dsw-alias-label-primary,#222);font:inherit;font-size:12.5px}',
+      '.pmo-menu-select{cursor:pointer}',
+      '.pmo-menu-hint{grid-column:2;font-size:11px;color:var(--dsw-alias-label-secondary,#888);line-height:1.4;margin-top:-4px}',
+      '.pmo-menu-status{min-height:16px;font-size:11.5px;color:var(--dsw-alias-state-success-primary,#2ea043)}',
+      '.pmo-menu-foot{font-size:10.5px;color:var(--dsw-alias-label-secondary,#999);line-height:1.45;',
+      'border-top:1px solid var(--dsw-alias-border-l1,#eee);padding-top:8px}',
     ].join('');
 
     function pickDict(localeSvc) {
@@ -125,129 +127,155 @@ window.__ModuleLoader__.load({
       return 'no-session';
     }
 
+    function el(tag, cls, text) {
+      const n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text !== void 0 && text !== null) n.textContent = text;
+      return n;
+    }
+
     function closeMenu() {
       if (menuCleanup) { try { menuCleanup(); } catch (e) { /* ignore */ } menuCleanup = null; }
       if (menuEl) { if (menuEl.parentNode) menuEl.parentNode.removeChild(menuEl); menuEl = null; }
     }
 
+    function menuRow(label, control, hint) {
+      const row = el('div', 'pmo-menu-row');
+      row.appendChild(el('span', 'pmo-menu-label', label));
+      row.appendChild(control);
+      if (hint) row.appendChild(hint);
+      return row;
+    }
+
     function openMenu(anchor, sid) {
       closeMenu();
-      const stl = document.createElement('style');
-      stl.textContent = MENU_CSS;
+      const stl = el('style');
+      stl.textContent = CSS;
       document.head.appendChild(stl);
-      const m = document.createElement('div');
-      m.className = 'pmo-menu';
-      const title = document.createElement('div');
-      title.className = 'pmo-menu-title';
-      title.textContent = '会话级审查设置';
-      m.appendChild(title);
-      const rowM = document.createElement('label');
-      rowM.className = 'pmo-menu-row';
-      const lblM = document.createElement('span');
-      lblM.className = 'pmo-menu-label';
-      lblM.textContent = t.model;
-      const selM = document.createElement('select');
-      selM.className = 'pmo-menu-select';
-      const optInhM = document.createElement('option');
-      optInhM.value = '';
-      optInhM.textContent = t.inheritModel;
-      selM.appendChild(optInhM);
-      rowM.appendChild(lblM);
-      rowM.appendChild(selM);
-      m.appendChild(rowM);
-      const rowE = document.createElement('label');
-      rowE.className = 'pmo-menu-row';
-      const lblE = document.createElement('span');
-      lblE.className = 'pmo-menu-label';
-      lblE.textContent = t.effort;
-      const selE = document.createElement('select');
-      selE.className = 'pmo-menu-select';
+      const m = el('div', 'pmo-menu');
+      const head = el('div', 'pmo-menu-head');
+      head.appendChild(el('div', 'pmo-menu-title', t.menuTitle));
+      const close = el('button', 'pmo-menu-close', '×');
+      close.type = 'button';
+      close.setAttribute('aria-label', t.close);
+      close.addEventListener('click', closeMenu);
+      head.appendChild(close);
+      m.appendChild(head);
+      m.appendChild(el('div', 'pmo-menu-sub', t.menuSub));
+
+      const selM = el('select', 'pmo-menu-select');
+      const optInh = el('option', null, t.inheritModel);
+      optInh.value = '';
+      selM.appendChild(optInh);
+      const selE = el('select', 'pmo-menu-select');
       for (const o of EFFORTS) {
-        const opt = document.createElement('option');
+        const opt = el('option', null, o[1]);
         opt.value = o[0];
-        opt.textContent = o[1];
         selE.appendChild(opt);
       }
-      rowE.appendChild(lblE);
-      rowE.appendChild(selE);
-      m.appendChild(rowE);
-      const rowR = document.createElement('label');
-      rowR.className = 'pmo-menu-row';
-      const lblR = document.createElement('span');
-      lblR.className = 'pmo-menu-label';
-      lblR.textContent = t.rounds;
-      const inR = document.createElement('input');
+      const inR = el('input', 'pmo-menu-input');
       inR.type = 'number';
       inR.min = '0';
       inR.step = '1';
-      inR.className = 'pmo-menu-input';
-      inR.placeholder = '全局默认';
-      rowR.appendChild(lblR);
-      rowR.appendChild(inR);
-      m.appendChild(rowR);
-      const status = document.createElement('div');
-      status.className = 'pmo-menu-status';
+      inR.placeholder = t.roundsHint;
+      const hintR = el('div', 'pmo-menu-hint', t.roundsHint);
+
+      m.appendChild(menuRow(t.model, selM));
+      m.appendChild(menuRow(t.effort, selE));
+      m.appendChild(menuRow(t.rounds, inR, hintR));
+      const status = el('div', 'pmo-menu-status');
       m.appendChild(status);
-      const foot = document.createElement('div');
-      foot.className = 'pmo-menu-foot';
-      foot.textContent = t.foot;
-      m.appendChild(foot);
+      m.appendChild(el('div', 'pmo-menu-foot', t.menuSub));
       document.body.appendChild(m);
-      const r = anchor.getBoundingClientRect();
+
+      const r = anchor && anchor.getBoundingClientRect
+        ? anchor.getBoundingClientRect()
+        : { left: 8, right: 8, top: window.innerHeight - 48, bottom: window.innerHeight - 48 };
       m.style.visibility = 'hidden';
-      m.style.position = 'fixed';
       requestAnimationFrame(function () {
-        const mw = m.offsetWidth;
-        const mh = m.offsetHeight;
-        let left = Math.min(Math.max(8, r.left), window.innerWidth - mw - 8);
-        let top = r.top - mh - 8;
-        if (top < 8) top = Math.min(window.innerHeight - mh - 8, r.bottom + 8);
+        const mw = m.offsetWidth || 400;
+        const mh = m.offsetHeight || 220;
+        const maxLeft = Math.max(8, window.innerWidth - mw - 8);
+        const left = Math.min(Math.max(8, r.left), maxLeft);
+        let top = r.top - mh - 10;
+        if (top < 8) top = Math.min(window.innerHeight - mh - 8, r.bottom + 10);
+        if (top < 8) top = 8;
         m.style.left = left + 'px';
         m.style.top = top + 'px';
         m.style.visibility = 'visible';
       });
+
+      let wantCombo = '';
       function persist() {
         const q = new URLSearchParams();
         q.set('session', sid);
-        q.set('provider', selM.value.split('|')[0] || '');
-        q.set('model', selM.value.split('|')[1] || '');
+        const mv = selM.value;
+        const i = mv.indexOf('|');
+        q.set('provider', i >= 0 ? mv.slice(0, i) : '');
+        q.set('model', i >= 0 ? mv.slice(i + 1) : '');
         q.set('effort', selE.value);
         q.set('maxRounds', inR.value.trim());
         fetch(BASE + '/session-config/set?' + q.toString())
           .then(function (res) { return res.json(); })
-          .then(function (body) { status.textContent = body && body.ok ? t.saved : t.fail; })
-          .catch(function () { status.textContent = t.fail + '（连接）'; });
+          .then(function (body) {
+            status.textContent = body && body.ok ? t.saved : t.fail;
+            status.style.color = body && body.ok ? '' : 'var(--dsw-alias-state-error-primary,#e5484d)';
+          })
+          .catch(function () {
+            status.textContent = t.fail + '（连接）';
+            status.style.color = 'var(--dsw-alias-state-error-primary,#e5484d)';
+          });
       }
       selM.addEventListener('change', persist);
       selE.addEventListener('change', persist);
       inR.addEventListener('change', persist);
+
+      fetch(BASE + '/config')
+        .then(function (res) { return res.json(); })
+        .then(function (body) {
+          if (!body || !body.ok || !body.config) return;
+          const n = body.config.maxRounds;
+          if (typeof n === 'number') {
+            inR.placeholder = '继承全局（' + n + ' 轮）';
+            hintR.textContent = '留空 = 继承全局上限（' + n + ' 轮）';
+          }
+        })
+        .catch(function () { });
+
       fetch(BASE + '/session-config?session=' + encodeURIComponent(sid))
         .then(function (res) { return res.json(); })
         .then(function (body) {
           if (!body || !body.ok || !body.override) return;
           const ov = body.override;
-          if (ov.provider && ov.model) selM.value = ov.provider + '|' + ov.model;
+          if (ov.provider && ov.model) {
+            wantCombo = ov.provider + '|' + ov.model;
+            selM.value = wantCombo;
+          }
           if (ov.effort) selE.value = ov.effort;
           if (ov.maxRounds !== undefined) inR.value = String(ov.maxRounds);
         })
         .catch(function () { });
+
       fetch(BASE + '/models')
         .then(function (res) { return res.json(); })
         .then(function (body) {
           if (!body || !body.ok || !Array.isArray(body.providers)) return;
           for (const g of body.providers) {
-            const og = document.createElement('optgroup');
-            og.label = g.provider;
+            const og = el('optgroup');
+            og.label = g.name || g.provider;
             for (const mm of g.models || []) {
-              const opt = document.createElement('option');
+              const opt = el('option', null, (mm.name && mm.name !== mm.id)
+                ? mm.name + '（' + g.provider + '/' + mm.id + '）'
+                : g.provider + '/' + mm.id);
               opt.value = g.provider + '|' + mm.id;
-              opt.textContent = (mm.name && mm.name !== mm.id) ? mm.name + '（' + g.provider + '/' + mm.id + '）' : g.provider + '/' + mm.id;
               og.appendChild(opt);
             }
             selM.appendChild(og);
           }
+          if (wantCombo) selM.value = wantCombo;
         })
         .catch(function () { });
+
       const onDoc = function (e) {
         if (!m.contains(e.target) && e.target !== anchor && !(anchor && anchor.contains(e.target))) closeMenu();
       };
@@ -263,12 +291,13 @@ window.__ModuleLoader__.load({
     }
 
     function buildPlugin() {
-      function PmoButton(props) {
+      function PmoControl(props) {
         try {
           const sid = sessionIdOf(props);
           const state = React.useState({ running: false, turns: 0, online: null, pending: false, err: null });
           const view = state[0];
           const setView = state[1];
+          const wrapRef = React.useRef(null);
 
           React.useEffect(function () {
             let dead = false;
@@ -311,23 +340,36 @@ window.__ModuleLoader__.load({
             + ' · session:' + (sid === 'no-session' ? '—' : sid.slice(0, 8))
             + ' 路由:' + (view.online === null ? '?' : view.online ? 'ok' : '✗ ' + (view.err || ''));
 
-          return h('button', {
-            type: 'button',
-            className: 'pmo-btn' + (view.running ? ' pmo-on' : ''),
-            title: tip,
-            'aria-label': view.running ? t.stop : t.start,
-            'aria-pressed': view.running,
-            disabled: view.pending,
-            onClick: onClick,
-          },
+          return h('div', { className: 'pmo-ctl', ref: wrapRef },
             h('style', null, CSS),
-            h('svg', {
-              viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
-              'stroke-width': 2.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': true,
+            h('button', {
+              type: 'button',
+              className: 'pmo-btn' + (view.running ? ' pmo-on' : ''),
+              title: tip,
+              'aria-label': view.running ? t.stop : t.start,
+              'aria-pressed': view.running,
+              disabled: view.pending,
+              onClick: onClick,
             },
-              h('path', { d: 'M12 19V5' }),
-              h('path', { d: 'M5 12l7-7 7 7' }),
+              h('svg', {
+                viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+                'stroke-width': 2.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': true,
+              },
+                h('path', { d: 'M12 19V5' }),
+                h('path', { d: 'M5 12l7-7 7 7' }),
+              ),
             ),
+            h('button', {
+              type: 'button',
+              className: 'pmo-caret-btn',
+              title: VER + ' · ' + t.menuTitle + '（模型 / 思考等级 / 轮数）',
+              'aria-label': t.menuAria,
+              'aria-haspopup': 'dialog',
+              onClick: function (ev) {
+                ev.stopPropagation();
+                openMenu(wrapRef.current, sid);
+              },
+            }, '▾'),
           );
         } catch (err) {
           return h('span', { className: 'pmo-strip', title: String(err) }, h('span', { className: 'pmo-bad' }), 'PMO按钮渲染异常:' + err);
@@ -342,89 +384,53 @@ window.__ModuleLoader__.load({
         return h('div', { className: 'pmo-strip' }, h('span', { className: 'pmo-ok' }), 'PMO ' + VER + ' client 已加载 ' + now);
       }
 
-      function MenuButton(props) {
-        try {
-          const sid = sessionIdOf(props);
-          return h('button', {
-            type: 'button',
-            className: 'pmo-menu-btn',
-            title: VER + ' · 会话级审查设置（模型 / 思考等级 / 轮数上限）',
-            'aria-label': 'PMO 会话级审查设置',
-            onClick: function (ev) {
-              ev.stopPropagation();
-              openMenu(ev.currentTarget, sid);
-            },
-          },
-            h('style', null, CSS),
-            h('span', { className: 'pmo-caret', 'aria-hidden': true }, '▾'),
-          );
-        } catch (err) {
-          return null;
-        }
-      }
-
-      const CFG_SECTIONS = [
-        {
-          title: '循环',
-          fields: [
-            ['maxRounds', '审查轮数上限（0 = 不限）', 'number'],
-            ['maxChars', '日志单块截断阈值', 'number'],
-          ],
-        },
-        {
-          title: '身份与问候',
-          fields: [
-            ['childLabel', '子代理标签'],
-            ['provider', '子代理提供方（spawn）'],
-            ['greet', '启动问候文本（签到，非审查请求）'],
-          ],
-        },
-        {
-          title: '日志',
-          fields: [
-            ['logFile', '日志文件路径（默认 ~/.dsh/logs/pmo-button.log）'],
-          ],
-        },
-      ];
-
       function ConfigPanel() {
-        const st = React.useState({ loaded: false, cfg: {}, editor: true, msg: '', catalog: null });
+        const st = React.useState({ loaded: false, cfg: {}, catalog: [], providers: [], msg: '' });
         const view = st[0];
         const set = st[1];
 
         React.useEffect(function () {
           let dead = false;
+          const merge = function (patch) { set(function (s) { return Object.assign({}, s, patch); }); };
           fetch(BASE + '/config')
             .then(function (r) { return r.json(); })
             .then(function (body) {
-              if (!dead && body && body.ok) set(function (s) { return Object.assign({}, s, { loaded: true, cfg: body.config || {}, editor: body.editorAvailable !== false }); });
+              if (!dead && body && body.ok) merge({ loaded: true, cfg: body.config || {}, msg: '' });
+              else if (!dead) merge({ loaded: true, msg: '配置读取失败' });
             })
-            .catch(function () { if (!dead) set(function (s) { return Object.assign({}, s, { loaded: true }); }); });
+            .catch(function () { if (!dead) merge({ loaded: true, msg: '配置读取失败（连接）' }); });
           fetch(BASE + '/models')
             .then(function (r) { return r.json(); })
-            .then(function (body) { if (!dead && body && body.ok) set(function (s) { return Object.assign({}, s, { catalog: body.providers || [] }); }); })
+            .then(function (body) { if (!dead && body && body.ok) merge({ catalog: body.providers || [] }); })
+            .catch(function () { });
+          fetch(BASE + '/providers')
+            .then(function (r) { return r.json(); })
+            .then(function (body) { if (!dead && body && body.ok) merge({ providers: body.providers || [] }); })
             .catch(function () { });
           return function () { dead = true; };
         }, []);
 
-        function saveField(key, value) {
+        function saveFields(patch) {
+          set(function (s) { return Object.assign({}, s, { cfg: Object.assign({}, s.cfg, patch), msg: '保存中…' }); });
           const q = new URLSearchParams();
-          q.set(key, String(value));
+          for (const k of Object.keys(patch)) q.set(k, String(patch[k]));
           fetch(BASE + '/config/save?' + q.toString())
             .then(function (r) { return r.json(); })
-            .then(function (body) { set(function (s) { return Object.assign({}, s, { msg: body && body.ok ? '已保存 ✓（热生效）' : '保存失败：' + ((body && body.error) || '未知') }); }); })
+            .then(function (body) {
+              if (body && body.ok) set(function (s) { return Object.assign({}, s, { cfg: body.config || s.cfg, msg: '已保存 ✓（热生效）' }); });
+              else set(function (s) { return Object.assign({}, s, { msg: '保存失败：' + ((body && body.error) || '未知') }); });
+            })
             .catch(function () { set(function (s) { return Object.assign({}, s, { msg: '保存失败（连接）' }); }); });
         }
 
-        function textField(key, label, placeholder) {
+        function textField(key, label, placeholder, wide) {
           const value = view.cfg && view.cfg[key] !== undefined && view.cfg[key] !== null ? String(view.cfg[key]) : '';
-          return h('label', { className: 'pmo-cfg-row', key: key },
-            h('span', { className: 'pmo-cfg-label' }, label),
-            h('input', {
-              className: 'pmo-cfg-input', type: 'text', defaultValue: value, placeholder: placeholder || '',
-              onChange: function (e) { saveField(key, e.target.value); },
-            }),
-          );
+          const input = h('input', {
+            className: 'pmo-cfg-input', type: 'text', defaultValue: value, placeholder: placeholder || '',
+            onBlur: function (e) { saveFields({ [key]: e.target.value }); },
+          });
+          return h('label', { className: 'pmo-cfg-row' + (wide ? ' pmo-wide' : ''), key: key },
+            h('span', { className: 'pmo-cfg-label' }, label), input);
         }
         function numberField(key, label) {
           const value = view.cfg && view.cfg[key] !== undefined && view.cfg[key] !== null ? String(view.cfg[key]) : '';
@@ -432,60 +438,95 @@ window.__ModuleLoader__.load({
             h('span', { className: 'pmo-cfg-label' }, label),
             h('input', {
               className: 'pmo-cfg-input', type: 'number', min: '0', step: '1', defaultValue: value,
-              onChange: function (e) { saveField(key, e.target.value); },
-            }),
-          );
+              onChange: function (e) { saveFields({ [key]: e.target.value }); },
+            }));
         }
-        function modelSelect() {
-          const curProvider = view.cfg && view.cfg.childModelProvider ? view.cfg.childModelProvider : '';
-          const curModel = view.cfg && view.cfg.childModel ? view.cfg.childModel : '';
+        function textareaField(key, label, placeholder) {
+          const value = view.cfg && view.cfg[key] !== undefined && view.cfg[key] !== null ? String(view.cfg[key]) : '';
+          return h('label', { className: 'pmo-cfg-row pmo-wide', key: key },
+            h('span', { className: 'pmo-cfg-label' }, label),
+            h('textarea', {
+              className: 'pmo-cfg-input', defaultValue: value, placeholder: placeholder || '',
+              onBlur: function (e) { saveFields({ [key]: e.target.value }); },
+            }));
+        }
+        function modelField() {
+          const curProvider = view.cfg && view.cfg.childModelProvider ? String(view.cfg.childModelProvider) : '';
+          const curModel = view.cfg && view.cfg.childModel ? String(view.cfg.childModel) : '';
           const combo = curProvider && curModel ? curProvider + '|' + curModel : '';
-          const pool = (view.catalog && view.catalog.length)
-            ? view.catalog
-            : (curProvider && curModel ? [{ provider: curProvider, models: [{ id: curModel, name: curModel }] }] : []);
           const groups = [];
-          for (const g of pool) {
-            const og = h('optgroup', { label: g.provider, key: g.provider });
-            for (const m of g.models || []) og.appendChild(h('option', { value: g.provider + '|' + m.id, key: m.id }, (m.name && m.name !== m.id) ? m.name + '（' + g.provider + '/' + m.id + '）' : g.provider + '/' + m.id));
-            groups.push(og);
+          for (const g of view.catalog || []) {
+            const kids = (g.models || []).map(function (m) {
+              return h('option', { value: g.provider + '|' + m.id, key: g.provider + '|' + m.id },
+                (m.name && m.name !== m.id) ? m.name + '（' + g.provider + '/' + m.id + '）' : g.provider + '/' + m.id);
+            });
+            groups.push(h('optgroup', { label: g.name || g.provider, key: g.provider }, ...kids));
           }
+          const hasCombo = combo && !(view.catalog || []).some(function (g) {
+            return (g.models || []).some(function (m) { return g.provider + '|' + m.id === combo; });
+          });
+          const opts = [h('option', { value: '', key: 'inherit' }, '继承主会话模型')];
+          if (hasCombo) opts.push(h('option', { value: combo, key: 'current' }, combo));
+          opts.push(...groups);
           return h('label', { className: 'pmo-cfg-row', key: 'childModel' },
-            h('span', { className: 'pmo-cfg-label' }, '审查模型（空 = 继承主会话）'),
+            h('span', { className: 'pmo-cfg-label' }, '审查模型'),
             h('select', {
               className: 'pmo-cfg-input', value: combo,
               onChange: function (e) {
                 const v = e.target.value;
                 const i = v.indexOf('|');
-                if (i === -1) saveField('childModelProvider', '');
-                else {
-                  saveField('childModelProvider', v.slice(0, i));
-                  saveField('childModel', v.slice(i + 1));
-                }
+                if (i === -1) saveFields({ childModelProvider: '', childModel: '' });
+                else saveFields({ childModelProvider: v.slice(0, i), childModel: v.slice(i + 1) });
               },
-            },
-              h('option', { value: '', key: 'inherit' }, '继承主会话模型'),
-              groups,
-            ),
-          );
+            }, ...opts));
+        }
+        function effortField() {
+          const value = view.cfg && view.cfg.childReasoningEffort ? String(view.cfg.childReasoningEffort) : '';
+          return h('label', { className: 'pmo-cfg-row', key: 'childReasoningEffort' },
+            h('span', { className: 'pmo-cfg-label' }, '思考等级'),
+            h('select', {
+              className: 'pmo-cfg-input', value: value,
+              onChange: function (e) { saveFields({ childReasoningEffort: e.target.value }); },
+            }, ...EFFORTS.map(function (o) { return h('option', { value: o[0], key: o[0] || 'inherit' }, o[1]); })));
+        }
+        function providerField() {
+          const value = view.cfg && view.cfg.provider ? String(view.cfg.provider) : 'spawn';
+          const list = (view.providers && view.providers.length) ? view.providers.slice() : ['spawn', 'fork'];
+          if (list.indexOf(value) === -1) list.push(value);
+          return h('label', { className: 'pmo-cfg-row', key: 'provider' },
+            h('span', { className: 'pmo-cfg-label' }, '子代理提供方'),
+            h('select', {
+              className: 'pmo-cfg-input', value: value,
+              onChange: function (e) { saveFields({ provider: e.target.value }); },
+            }, ...list.map(function (p) { return h('option', { value: p, key: p }, p); })));
         }
 
         if (!view.loaded) return h('div', { className: 'pmo-cfg' }, h('span', { className: 'pmo-cfg-note' }, 'PMO 配置加载中…'));
-        const sections = [
-          { title: '循环', rows: [numberField('maxRounds', '审查轮数上限（0 = 不限）'), numberField('maxChars', '日志单块截断阈值')] },
-          {
-            title: '审查官（子代理）',
-            rows: [textField('childLabel', '子代理标签'), textField('provider', '子代理提供方（spawn）'), modelSelect()],
-          },
-          { title: '身份与问候', rows: [textField('greet', '启动问候文本（签到，非审查请求）')] },
-          { title: '日志', rows: [textField('logFile', '日志文件路径（默认 ~/.dsh/logs/pmo-button.log）')] },
-        ];
-        const out = [h('div', { className: 'pmo-cfg-sectitle', key: 'h-model' }, '审查模型（异构审查：审查方 ≠ 执行方）'), modelSelect()];
-        for (const sec of sections) {
-          out.push(h('div', { className: 'pmo-cfg-sectitle', key: sec.title }, sec.title));
-          for (const row of sec.rows) out.push(row);
-        }
-        out.push(h('div', { className: 'pmo-cfg-status', key: 'status' }, view.msg || '各字段修改后自动保存并热生效'));
-        return h('div', { className: 'pmo-cfg' }, out);
+        return h('div', { className: 'pmo-cfg' },
+          h('div', { className: 'pmo-cfg-section' },
+            h('div', { className: 'pmo-cfg-sectitle' }, '审查模型（异构审查：审查方 ≠ 执行方）'),
+            modelField(),
+            effortField(),
+            h('div', { className: 'pmo-cfg-note' }, '留空 = 继承主会话；修改模型/思考等级后，下次启动会重置审查官（记忆清零）。'),
+          ),
+          h('div', { className: 'pmo-cfg-section' },
+            h('div', { className: 'pmo-cfg-sectitle' }, '运行'),
+            numberField('maxRounds', '审查轮数上限（0 = 不限）'),
+            numberField('maxChars', '日志单块截断阈值'),
+            providerField(),
+            textField('childLabel', '子代理标签'),
+          ),
+          h('div', { className: 'pmo-cfg-section' },
+            h('div', { className: 'pmo-cfg-sectitle' }, '身份与问候'),
+            textareaField('greet', '启动问候文本（签到，非审查请求）'),
+            textareaField('rolePrompt', '身份提示词（缺席时使用内置审查规程）'),
+          ),
+          h('div', { className: 'pmo-cfg-section' },
+            h('div', { className: 'pmo-cfg-sectitle' }, '日志'),
+            textField('logFile', '日志文件路径', '~/.dsh/logs/pmo-button.log'),
+          ),
+          h('div', { className: 'pmo-cfg-status', key: 'status' }, view.msg || '各字段修改后自动保存并热生效（文本失焦保存）'),
+        );
       }
 
       return {
@@ -507,13 +548,7 @@ window.__ModuleLoader__.load({
           c.slots.inject('conversation.input.right', function () {
             return c.slots.register(
               { name: 'conversation.input.right', id: 'pmo-button', order: 10 },
-              PmoButton,
-            );
-          });
-          c.slots.inject('conversation.input.right', function () {
-            return c.slots.register(
-              { name: 'conversation.input.right', id: 'pmo-button-menu', order: 11 },
-              MenuButton,
+              PmoControl,
             );
           });
         },
@@ -530,7 +565,7 @@ window.__ModuleLoader__.load({
           c.slots.inject('conversation.composer.dock', function () {
             return c.slots.register(
               { name: 'conversation.composer.dock', id: 'pmo-button-strip', order: 90 },
-              function () { return h('div', { className: 'pmo-strip' }, h('span', { className: 'pmo-bad' }), 'PMO v0.11.0 加载失败: ' + loadError); },
+              function () { return h('div', { className: 'pmo-strip' }, h('span', { className: 'pmo-bad' }), 'PMO v0.12.0 加载失败: ' + loadError); },
             );
           });
         },

@@ -821,23 +821,37 @@ export function apply(ctx, config) {
     }
     if (request.method === 'GET' && rest === '/models') {
       // The same catalog the composer's model selector consumes: providers ×
-      // advertised models (id + display name).
+      // advertised models (id + display name). `llm.listProviders()` returns
+      // LlmProviderInfo ({id,name}) — passing the object straight to listModels
+      // silently emptied this route before 0.12.1.
       const llm = ctx.get('llm')
       if (!llm || typeof llm.listProviders !== 'function') return json({ ok: false, error: 'llm 服务不可用' }, 400)
       const out = []
       const providers = await llm.listProviders()
       for (const p of Array.isArray(providers) ? providers : []) {
+        const id = typeof p === 'string' ? p : (p && p.id)
+        if (!id) continue
+        const name = typeof p === 'string' ? p : ((p && p.name) || id)
         try {
-          const models = await llm.listModels(p)
+          const models = await llm.listModels(id)
           if (Array.isArray(models)) {
             out.push({
-              provider: p,
-              models: models.map((m) => ({ id: m.id ?? m.model ?? '', name: m.name ?? m.label ?? m.id ?? m.model ?? '' })),
+              provider: id,
+              name,
+              models: models.map((m) => ({
+                id: m.id ?? m.model ?? '',
+                name: m.name ?? m.label ?? m.id ?? m.model ?? '',
+              })),
             })
           }
         } catch { /* catalog-less provider: skip */ }
       }
       return json({ ok: true, providers: out })
+    }
+    if (request.method === 'GET' && rest === '/providers') {
+      const subagents = ctx.get('subagents')
+      const list = subagents && typeof subagents.list === 'function' ? subagents.list() : []
+      return json({ ok: true, providers: Array.isArray(list) ? list : [] })
     }
     if (request.method === 'GET' && rest === '/session-config') {
       const sid = url.searchParams.get('session') ?? 'unknown'
