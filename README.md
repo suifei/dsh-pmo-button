@@ -1,5 +1,7 @@
 # 🎛️ PMO 审查循环按钮
 
+<p align="center"><a href="./README.en.md">English</a> | <strong>中文</strong></p>
+
 <p align="center"><img src="logo.svg" width="96" alt="dsh-pmo-button · 红鲸鱼"></p>
 
 [![npm version](https://img.shields.io/npm/v/@suifei/dsh-pmo-button.svg)](https://www.npmjs.com/package/@suifei/dsh-pmo-button)
