@@ -252,6 +252,7 @@ dsh --profile <your-profile> --dump-config   # verify the plugin tree
 
 ## 📌 Versions
 
+- **0.12.3** — docs-only: bilingual README (Chinese default + English), two UI screenshots, the global config path and the "heterogeneous model + max effort" recommendation; no code/behavior changes, same functionality as 0.12.2.
 - **0.12.2** — the per-session menu and the global config panel share one effort selector: both list only the model capabilities from `llm.resolveModelInfo()`; an empty model can only inherit (no more hardcoded `minimal/low/medium/high/max`); saving clears an effort the model does not support.
 - **0.12.1** — fix: a reviewer model/effort change now resets the reviewer immediately (previously it waited for the next light-up, causing "qwen selected but deepseek-official still running → old-key 401"); effort options come from `llm.resolveModelInfo()` (qwen no longer offers `max`; `high → xhigh` stays a provider alias); the global config validates the model/effort pair; the child-creation log records the actual reviewer model.
 - **0.12.0** — dual-line relay (line B + `agent/pre-step` gate), identity-prompt resend on change, per-session settings menu, whale pill (four states + swimming motion), config panel rebuild (model / effort / provider / identity prompt), model catalog fix + `/providers`; Windows real-machine and 12 live regressions passed.

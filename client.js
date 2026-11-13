@@ -18,7 +18,7 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const h = React.createElement;
     const BASE = '/pmo-button';
-    const VER = 'v0.12.2';
+    const VER = 'v0.12.3';
     /** Effort choices from the model's DSH reasoning catalog. No hardcoded
      *  minimal/low/... fallback: without a concrete model the only honest
      *  choice is inherit. Both the session menu and the config panel use this

@@ -33,7 +33,7 @@ export const name = 'dsh-pmo-button'
 export const inject = ['webServer']
 /** Host-half version, logged on activation so an operator can tell which build
  *  the running Host actually imported (hot reload vs stale module). */
-const HOST_VERSION = '0.12.2'
+const HOST_VERSION = '0.12.3'
 
 /** The identity prompt; delivered once per session and re-delivered only when its text changes. */
 const ROLE_PROMPT_DEFAULT = [

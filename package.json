@@ -1,6 +1,6 @@
 {
   "name": "@suifei/dsh-pmo-button",
-  "version": "0.12.2",
+  "version": "0.12.3",
   "description": "PMO 审查循环按钮 —— 为 AI 会话挂载一位“资深项目总监”。持久审查子代理 + 双线路 + STATUS 协议（CONTINUE/DONE/NEED_HUMAN）自动循环（DeepSeek Harness 插件）",
   "keywords": [
     "deepseek-harness", "dsh", "dsh-plugin", "pmo", "code-review",
