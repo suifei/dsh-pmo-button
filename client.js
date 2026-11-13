@@ -41,24 +41,28 @@ window.__ModuleLoader__.load({
     let menuCleanup = null;
 
     const CSS = [
-      '.pmo-ctl{display:inline-flex;align-items:center;gap:2px;flex:0 0 auto}',
-      '.pmo-btn{position:relative;flex:0 0 auto;width:32px;height:32px;margin:0;padding:0;border:0;border-radius:9999px;',
-      'background:var(--dsw-alias-bg-layer-2,#e8e8ea);color:var(--dsw-alias-state-error-primary,#e5484d);display:inline-flex;',
-      'align-items:center;justify-content:center;cursor:pointer;transition:background .15s ease,color .15s ease,transform .15s ease}',
-      '.pmo-btn:hover{background:var(--dsw-alias-bg-overlay,#dcdcdf)}',
-      '.pmo-btn:focus-visible{outline:2px solid currentColor;outline-offset:2px}',
+      '.pmo-ctl{display:inline-flex;align-items:center;flex:0 0 auto;height:32px;border-radius:9999px;overflow:hidden;',
+      'background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l1,#d9d9de);',
+      'box-shadow:0 1px 2px rgba(0,0,0,.04);transition:background .15s ease,border-color .15s ease}',
+      '.pmo-ctl:hover{background:var(--dsw-alias-bg-layer-2,#f2f2f4)}',
+      '.pmo-ctl.pmo-on{background:var(--dsw-alias-state-error-primary,#e5484d);border-color:var(--dsw-alias-state-error-primary,#e5484d)}',
+      '.pmo-ctl.pmo-on:hover{filter:brightness(.94)}',
+      '.pmo-btn{flex:0 0 auto;width:30px;height:30px;margin:0;padding:0;border:0;border-radius:9999px;background:transparent;',
+      'color:var(--dsw-alias-state-error-primary,#e5484d);display:inline-flex;align-items:center;justify-content:center;',
+      'cursor:pointer;transition:color .15s ease}',
+      '.pmo-btn:focus-visible{outline:2px solid currentColor;outline-offset:-2px}',
       '.pmo-btn:disabled{opacity:.5;cursor:default}',
-      '.pmo-btn svg{width:17px;height:17px;display:block}',
-      '.pmo-btn.pmo-on{background:var(--dsw-alias-state-error-primary,#e5484d);color:#fff;',
-      'animation:pmo-work 1.4s ease-in-out infinite}',
-      '.pmo-btn.pmo-on:hover{filter:brightness(.92)}',
-      '@keyframes pmo-work{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}',
-      '@media (prefers-reduced-motion:reduce){.pmo-btn.pmo-on{animation:none}}',
-      '.pmo-caret-btn{flex:0 0 auto;width:22px;height:32px;margin:0;padding:0;border:0;border-radius:8px;background:transparent;',
-      'color:var(--dsw-alias-label-secondary,#7a7a80);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;',
-      'font-size:11px;line-height:1;transition:background .15s ease,color .15s ease}',
-      '.pmo-caret-btn:hover{background:var(--dsw-alias-bg-layer-2,#e8e8ea);color:var(--dsw-alias-label-primary,#222)}',
-      '.pmo-caret-btn:focus-visible{outline:2px solid currentColor;outline-offset:1px}',
+      '.pmo-btn svg{width:16px;height:16px;display:block}',
+      '.pmo-ctl.pmo-on .pmo-btn{color:#fff;animation:pmo-work 1.4s ease-in-out infinite}',
+      '@keyframes pmo-work{0%,100%{transform:scale(1)}50%{transform:scale(1.1)}}',
+      '@media (prefers-reduced-motion:reduce){.pmo-ctl.pmo-on .pmo-btn{animation:none}}',
+      '.pmo-caret-btn{flex:0 0 auto;width:24px;height:30px;margin:0;padding:0;border:0;border-left:1px solid var(--dsw-alias-border-l1,#e2e2e6);',
+      'border-radius:0;background:transparent;color:var(--dsw-alias-label-secondary,#8a8a90);display:inline-flex;',
+      'align-items:center;justify-content:center;cursor:pointer;transition:background .15s ease,color .15s ease}',
+      '.pmo-caret-btn:hover{background:var(--dsw-alias-bg-layer-2,#f2f2f4);color:var(--dsw-alias-label-primary,#222)}',
+      '.pmo-caret-btn:focus-visible{outline:2px solid currentColor;outline-offset:-2px}',
+      '.pmo-ctl.pmo-on .pmo-caret-btn{border-left-color:rgba(255,255,255,.35);color:#fff}',
+      '.pmo-ctl.pmo-on .pmo-caret-btn:hover{background:rgba(255,255,255,.16);color:#fff}',
       '.pmo-strip{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:2px 10px;',
       'font-size:11px;color:var(--dsw-alias-label-secondary,#888);user-select:none}',
       '.pmo-strip .pmo-ok{width:7px;height:7px;border-radius:9999px;background:var(--dsw-alias-state-success-primary,#2ea043)}',
@@ -80,8 +84,8 @@ window.__ModuleLoader__.load({
       '.pmo-cfg-note{font-size:11.5px;color:var(--dsw-alias-label-secondary,#888);line-height:1.5}',
       '.pmo-cfg-status{min-height:16px;font-size:11.5px;color:var(--dsw-alias-label-secondary,#888)}',
       '.pmo-menu{position:fixed;z-index:99999;width:388px;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);overflow:auto;',
-      'padding:14px;display:flex;flex-direction:column;gap:12px;border-radius:12px;background:var(--dsw-alias-bg-overlay,#fff);',
-      'border:1px solid var(--dsw-alias-border-l2,#c9c9cf);box-shadow:0 12px 32px rgba(0,0,0,.18);',
+      'padding:14px;display:flex;flex-direction:column;gap:12px;border-radius:12px;background:var(--dsw-alias-bg-layer-1,#fff);',
+      'border:1px solid var(--dsw-alias-border-l1,#e2e2e6);box-shadow:0 10px 28px rgba(0,0,0,.14);',
       'color:var(--dsw-alias-label-primary,#222);font:inherit;font-size:13px;line-height:1.5}',
       '.pmo-menu-head{display:flex;align-items:center;justify-content:space-between;gap:8px}',
       '.pmo-menu-title{font-weight:600;font-size:13px}',
@@ -355,11 +359,11 @@ window.__ModuleLoader__.load({
             + ' · session:' + (sid === 'no-session' ? '—' : sid.slice(0, 8))
             + ' 路由:' + (view.online === null ? '?' : view.online ? 'ok' : '✗ ' + (view.err || ''));
 
-          return h('div', { className: 'pmo-ctl', ref: wrapRef },
+          return h('div', { className: 'pmo-ctl' + (view.running ? ' pmo-on' : ''), ref: wrapRef },
             h('style', null, CSS),
             h('button', {
               type: 'button',
-              className: 'pmo-btn' + (view.running ? ' pmo-on' : ''),
+              className: 'pmo-btn',
               title: tip,
               'aria-label': view.running ? t.stop : t.start,
               'aria-pressed': view.running,
@@ -384,7 +388,14 @@ window.__ModuleLoader__.load({
                 ev.stopPropagation();
                 openMenu(wrapRef.current, sid);
               },
-            }, '▾'),
+            },
+              h('svg', {
+                viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+                'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': true,
+              },
+                h('path', { d: 'M6 9l6 6 6-6' }),
+              ),
+            ),
           );
         } catch (err) {
           return h('span', { className: 'pmo-strip', title: String(err) }, h('span', { className: 'pmo-bad' }), 'PMO按钮渲染异常:' + err);
