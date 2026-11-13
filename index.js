@@ -309,7 +309,12 @@ export function apply(ctx, config) {
   function sourceKind(data) {
     return data?.message?.source?.kind ?? data?.source?.kind ?? 'user'
   }
-  const OTHER_SOURCES = new Set(['inject', 'steering', 'time-context', 'agent-message', 'subagent-settled', 'system-reminder', 'tool-jobs', REVIEW_SOURCE_KIND])
+  // Only source.kind === 'user' is user speech. Every other producer kind
+  // (runtime-context, time-context, steering, tool-jobs, this plugin's own
+  // verdicts, kinds added by future plugins…) is context: MessageSourceMap is
+  // merge-extensible, so a blacklist of known kinds can never be complete.
+  const isUserTask = (t) => t.src === 'user'
+  const isAttachTask = (t) => t.src === '__attach__'
   /** Log/forward label of one non-user task; the plugin's own verdicts get their own tag. */
   function otherLabel(src) {
     return src === REVIEW_SOURCE_KIND ? '[PMO审查]' : `[注入:${src}]`
@@ -363,6 +368,12 @@ export function apply(ctx, config) {
       maxRounds: ov.maxRounds !== undefined && ov.maxRounds !== null ? Number(ov.maxRounds) : config.maxRounds,
     }
   }
+  /** Error message with its cause chain (SubagentError wraps the real reason in `cause`). */
+  function errText(err) {
+    const out = []
+    for (let e = err, i = 0; e && i < 4; e = e.cause, i++) out.push(e.code ? `${e.message} [${e.code}]` : String(e.message ?? e))
+    return out.join(' ← ')
+  }
   function bufferFor(sid) {
     let b = buffers.get(sid)
     if (!b) { b = emptyBuffer(); buffers.set(sid, b) }
@@ -380,9 +391,9 @@ export function apply(ctx, config) {
     const reason = JSON.stringify(event?.data?.reason ?? event?.data ?? null)
     const lines = [`${SEP}${stamp()}  [轮次结束] session=${sid.slice(0, 12)}… turn=${turn} reason=${reason}`]
 
-    const userTasks = (b?.tasks ?? []).filter((t) => !OTHER_SOURCES.has(t.src) && t.src !== '__attach__')
-    const attachTasks = (b?.tasks ?? []).filter((t) => t.src === '__attach__')
-    const otherTasks = (b?.tasks ?? []).filter((t) => OTHER_SOURCES.has(t.src))
+    const userTasks = (b?.tasks ?? []).filter(isUserTask)
+    const attachTasks = (b?.tasks ?? []).filter(isAttachTask)
+    const otherTasks = (b?.tasks ?? []).filter((t) => !isUserTask(t) && !isAttachTask(t))
     // Real user speech is the only unconditional forwarding ticket; a DONE-gated
     // turn is logged but not forwarded (breaks the settlement-echo cycle). A fresh
     // instruction also supersedes any verdict still pending from the last forward.
@@ -482,7 +493,7 @@ export function apply(ctx, config) {
             })
             .catch((err) => {
               lastForwardReview.set(sid, false)
-              append(`${stamp()}  [轮次转发] turn=${turn} 失败: ${err && err.message ? err.message : err}\n`)
+              append(`${stamp()}  [轮次转发] turn=${turn} 失败: ${errText(err)}\n`)
             })
         }
       }

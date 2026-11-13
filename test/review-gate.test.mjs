@@ -395,3 +395,20 @@ test('identity prompt: once per session, again only when its text changes', asyn
   assert.equal(h2.activated.length, 0, 'child reused')
   assert.match(h2.sent[0].text, /【身份设定更新，取代此前版本】\n身份规程/)
 })
+
+test('only source.kind === "user" is user speech (runtime-context is context)', async (t) => {
+  const h = harness()
+  t.after(() => h.cleanup())
+  await h.toggle(true)
+  await h.wait()
+
+  h.turnStart(1)
+  h.userMsg('Current runtime context. This snapshot supersedes earlier ones.', 'runtime-context')
+  h.assistantMsg('好的')
+  h.turnEnd(1)
+  await h.wait()
+
+  assert.equal(h.forwards().length, 0, 'a context-only turn earns no ticket')
+  assert.match(h.logText(), /\[注入:runtime-context\] Current runtime context/)
+  assert.doesNotMatch(h.logText(), /\[PMO\] Current runtime context/)
+})
