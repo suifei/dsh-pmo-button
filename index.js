@@ -1,5 +1,5 @@
 /**
- * PMO button — Host half v0.7.3.
+ * PMO button — Host half v0.7.4.
  * Per-session armed set, turn buffers, child registry, and the once-per-session
  * identity-prompt flag are persisted (pmo-state.json), so restarts lose nothing.
  * The `session/event` feed drives two jobs for armed sessions:
@@ -180,6 +180,11 @@ export function apply(ctx, config) {
     if (t.length <= limit) return t
     return t.slice(0, limit) + `\n…(截断，原长 ${t.length} 字符)`
   }
+  /** Never let credential-looking strings (npm_ tokens etc.) reach the log,
+   *  the review forward, or the child's durable session. */
+  function redact(s) {
+    return String(s ?? '').replace(/npm_[A-Za-z0-9]{20,}/g, 'npm_***已脱敏***')
+  }
   /** Auto-stop: dim the button and gate forwarding WITHOUT deafening the
    * session listener — turn logging keeps running, and user speech (or a
    * button re-light) releases the gate so the loop can auto-resume. */
@@ -315,7 +320,7 @@ export function apply(ctx, config) {
       otherTasks.forEach((t) => parts.push(`[注入:${t.src}] ${t.text}`))
       attachTasks.forEach((t) => parts.push(t.text))
       if (b.texts?.length > 0) parts.push(`[主代理] ${b.texts.join('\n\n---\n\n')}`)
-      const forward = clip(`【PMO 轮次转发 · turn=${turn}】\n` + parts.join('\n'), config.maxChars * 2)
+      const forward = clip(redact(`【PMO 轮次转发 · turn=${turn}】\n` + parts.join('\n')), config.maxChars * 2)
       const agents = ctx.get('agents')
       const agent = agents && typeof agents.get === 'function' ? agents.get(sid) : undefined
       const subagentsSvc = ctx.get('subagents')
@@ -424,7 +429,7 @@ export function apply(ctx, config) {
         const srcKind = text.trimStart().startsWith('<system-reminder>')
           ? 'system-reminder'
           : sourceKind(event.data)
-        b.tasks.push({ src: srcKind, text })
+        b.tasks.push({ src: srcKind, text: redact(text) })
         for (const s of nonTextSummaries(event.data)) b.tasks.push({ src: '__attach__', text: s })
         // Recognize the PMO child's STATUS protocol from its settlement notice
         // or direct adjacent message, and record the review verdict.
