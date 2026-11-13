@@ -39,30 +39,19 @@ window.__ModuleLoader__.load({
 
     let menuEl = null;
     let menuCleanup = null;
+    let menuOnClose = null;
 
     const CSS = [
-      '.pmo-ctl{display:inline-flex;align-items:center;flex:0 0 auto;height:32px;border-radius:9999px;overflow:hidden;',
-      'background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l1,#d9d9de);',
-      'box-shadow:0 1px 2px rgba(0,0,0,.04);transition:background .15s ease,border-color .15s ease}',
-      '.pmo-ctl:hover{background:var(--dsw-alias-bg-layer-2,#f2f2f4)}',
-      '.pmo-ctl.pmo-on{background:var(--dsw-alias-state-error-primary,#e5484d);border-color:var(--dsw-alias-state-error-primary,#e5484d)}',
-      '.pmo-ctl.pmo-on:hover{filter:brightness(.94)}',
-      '.pmo-btn{flex:0 0 auto;width:30px;height:30px;margin:0;padding:0;border:0;border-radius:9999px;background:transparent;',
-      'color:var(--dsw-alias-state-error-primary,#e5484d);display:inline-flex;align-items:center;justify-content:center;',
-      'cursor:pointer;transition:color .15s ease}',
-      '.pmo-btn:focus-visible{outline:2px solid currentColor;outline-offset:-2px}',
-      '.pmo-btn:disabled{opacity:.5;cursor:default}',
-      '.pmo-btn svg{width:16px;height:16px;display:block}',
-      '.pmo-ctl.pmo-on .pmo-btn{color:#fff;animation:pmo-work 1.4s ease-in-out infinite}',
-      '@keyframes pmo-work{0%,100%{transform:scale(1)}50%{transform:scale(1.1)}}',
-      '@media (prefers-reduced-motion:reduce){.pmo-ctl.pmo-on .pmo-btn{animation:none}}',
-      '.pmo-caret-btn{flex:0 0 auto;width:24px;height:30px;margin:0;padding:0;border:0;border-left:1px solid var(--dsw-alias-border-l1,#e2e2e6);',
-      'border-radius:0;background:transparent;color:var(--dsw-alias-label-secondary,#8a8a90);display:inline-flex;',
-      'align-items:center;justify-content:center;cursor:pointer;transition:background .15s ease,color .15s ease}',
-      '.pmo-caret-btn:hover{background:var(--dsw-alias-bg-layer-2,#f2f2f4);color:var(--dsw-alias-label-primary,#222)}',
-      '.pmo-caret-btn:focus-visible{outline:2px solid currentColor;outline-offset:-2px}',
-      '.pmo-ctl.pmo-on .pmo-caret-btn{border-left-color:rgba(255,255,255,.35);color:#fff}',
-      '.pmo-ctl.pmo-on .pmo-caret-btn:hover{background:rgba(255,255,255,.16);color:#fff}',
+      '.pmo-ctl{position:relative;display:inline-block;flex:0 0 auto;width:56px;height:32px;border-radius:9999px}',
+      '.pmo-ctl .pmo-svg{position:absolute;inset:0;width:56px;height:32px;display:block;pointer-events:none}',
+      '.pmo-zone{position:absolute;top:0;bottom:0;margin:0;padding:0;border:0;background:transparent;cursor:pointer;z-index:2}',
+      '.pmo-zone.left{left:0;width:38px;border-radius:16px 0 0 16px}',
+      '.pmo-zone.right{right:0;width:18px;border-radius:0 16px 16px 0}',
+      '.pmo-zone.left:hover{background:rgba(0,0,0,.02)}',
+      '.pmo-zone.right:hover{background:rgba(0,0,0,.03)}',
+      '.pmo-zone:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4a7dd8);outline-offset:-2px}',
+      '.pmo-zone:disabled{cursor:default}',
+      '@media (prefers-reduced-motion:reduce){.pmo-svg animate,.pmo-svg animateTransform{display:none}}',
       '.pmo-strip{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:2px 10px;',
       'font-size:11px;color:var(--dsw-alias-label-secondary,#888);user-select:none}',
       '.pmo-strip .pmo-ok{width:7px;height:7px;border-radius:9999px;background:var(--dsw-alias-state-success-primary,#2ea043)}',
@@ -105,6 +94,39 @@ window.__ModuleLoader__.load({
       'border-top:1px solid var(--dsw-alias-border-l1,#eee);padding-top:8px}',
     ].join('');
 
+    /** DeepSeek whale glyph from the supplied pill artwork (one source of truth). */
+    const WHALE_D = 'M26.5542 4.34393C26.2719 4.20592 26.1506 4.46928 25.9856 4.60268C25.9292 4.64581 25.8815 4.70216 25.8338 4.75391C25.4215 5.19438 24.9396 5.48361 24.3105 5.44911C23.3905 5.39736 22.605 5.68659 21.9104 6.39041C21.7626 5.52271 21.2721 5.00462 20.5258 4.67226C20.1353 4.49976 19.7403 4.32668 19.4666 3.95119C19.2757 3.68381 19.2234 3.38595 19.1279 3.09211C19.0669 2.91501 19.0066 2.73388 18.8024 2.7034C18.5811 2.6689 18.4942 2.85463 18.4074 3.00989C18.0601 3.6447 17.9255 4.34393 17.9388 5.05235C17.9692 6.64572 18.642 7.91478 19.9789 8.81756C20.1307 8.92106 20.1698 9.02457 20.1221 9.1758C20.0307 9.48688 19.9226 9.78876 19.8271 10.0998C19.7662 10.2982 19.6753 10.3419 19.4626 10.2551C18.7288 9.94862 18.0952 9.49493 17.5351 8.94694C16.5846 8.02749 15.7249 7.01258 14.6531 6.21791C14.4013 6.03218 14.1494 5.85967 13.8889 5.69522C12.7952 4.63316 14.0321 3.76086 14.3185 3.65736C14.618 3.54925 14.4225 3.17779 13.4548 3.18239C12.487 3.18642 11.6015 3.51073 10.4727 3.94256C10.3077 4.00754 10.1341 4.05469 9.95637 4.09379C8.93227 3.89944 7.86849 3.85631 6.75755 3.98167C4.66564 4.21455 2.99464 5.20358 1.7664 6.89183C0.290908 8.92106 -0.0564026 11.2269 0.368535 13.6316C0.815324 16.1663 2.10911 18.2645 4.09695 19.905C6.15838 21.6059 8.53263 22.4397 11.2415 22.2799C12.8867 22.185 14.7181 21.9648 16.7841 20.2161C17.3051 20.4755 17.8519 20.579 18.7587 20.6566C19.4574 20.7216 20.1302 20.6221 20.6511 20.514C21.4671 20.3415 21.4107 19.5859 21.1157 19.4473C18.7242 18.3335 19.2492 18.7866 18.772 18.4198C19.987 16.9822 21.8431 14.4269 22.4158 10.9474C22.4722 10.5633 22.5441 10.0222 22.5355 9.71114C22.5309 9.52138 22.5746 9.44778 22.7913 9.42593C23.3905 9.35693 23.9718 9.19305 24.506 8.89921C26.0557 8.05279 26.6808 6.6624 26.828 4.996C26.8498 4.74126 26.8234 4.47791 26.5542 4.34393ZM13.0511 19.3438C10.7332 17.5216 9.60906 16.9219 9.14502 16.9477C8.71089 16.9736 8.78909 17.4704 8.88454 17.7942C8.98459 18.1139 9.11455 18.3341 9.29683 18.6147C9.42276 18.8004 9.50959 19.0764 9.1709 19.284C8.42453 19.7458 7.12671 19.1288 7.06576 19.0983C5.55519 18.2087 4.29245 17.0346 3.40233 15.4285C2.54268 13.8829 2.04356 12.2245 1.96133 10.4546C1.93948 10.0274 2.06541 9.87617 2.49092 9.79854C3.05099 9.69504 3.62831 9.67319 4.1878 9.75541C6.55342 10.101 8.56713 11.1585 10.2554 12.8341C11.2191 13.788 11.9482 14.9283 12.6992 16.0421C13.4979 17.2249 14.357 18.3519 15.4512 19.276C15.8377 19.5997 16.1459 19.8458 16.4408 20.0275C15.5513 20.127 14.0666 20.1483 13.0511 19.345V19.3438ZM14.162 12.1981C14.162 12.0083 14.3139 11.8571 14.5048 11.8571C14.5479 11.8571 14.587 11.8657 14.6221 11.8784C14.6698 11.8956 14.7135 11.9215 14.748 11.9606C14.8089 12.021 14.8434 12.1072 14.8434 12.1981C14.8434 12.3878 14.6916 12.5391 14.5007 12.5391C14.3098 12.5391 14.162 12.3878 14.162 12.1981ZM17.6127 13.968C17.3913 14.0588 17.17 14.1365 16.9572 14.1451C16.6271 14.1623 16.2672 14.0284 16.0717 13.8645C15.7681 13.6098 15.5507 13.4671 15.4599 13.0227C15.4208 12.8329 15.4426 12.5391 15.4771 12.3706C15.5553 12.0078 15.4685 11.7749 15.2126 11.5633C15.0045 11.3908 14.7394 11.343 14.4484 11.343C14.3397 11.343 14.2403 11.2953 14.1661 11.2568C14.0447 11.1964 13.9447 11.0452 14.0401 10.8594C14.0706 10.7991 14.2184 10.6524 14.2529 10.6266C14.6479 10.4017 15.1034 10.4753 15.5248 10.6438C15.9153 10.8037 16.2108 11.0969 16.6358 11.5115C17.0699 12.0124 17.1481 12.1504 17.3954 12.5264C17.5909 12.8203 17.7686 13.1221 17.8905 13.4677C17.9641 13.6834 17.8686 13.8599 17.6127 13.968Z'
+
+    /** 56×32 pill in four states: idle/active × menu closed/open. The surface
+     *  stays light; only the whale and the arrow turn red while armed. All
+     *  motion is inline SVG (nested animateTransform swim + glow + arrow pulse). */
+    function pillSvg(running, open) {
+      const color = running ? '#EF4444' : '#9CA3AF';
+      const stroke = running ? '#FECACA' : '#E5E7EB';
+      const bg = running ? '#FFFFFF' : '#F9FAFB';
+      const rightZone = open
+        ? '<path d="M 38 1 H 41 C 49.8 1 56 8.2 56 16 C 56 23.8 49.8 31 41 31 H 38 Z" fill="' + (running ? '#FEE2E2' : '#F3F4F6') + '"/>'
+        : '';
+      const glow = running
+        ? '<circle cx="16" cy="16" r="13" fill="none" stroke="#FCA5A5" stroke-width="1.5" stroke-linecap="round" stroke-dasharray="25 75" pathLength="100"><animate attributeName="stroke-dashoffset" from="100" to="0" dur="2s" repeatCount="indefinite"/></circle>'
+        : '';
+      const whale = running
+        ? '<g><animateTransform attributeName="transform" type="translate" values="0,0; 3,0; 0,0; -3,0; 0,0" dur="3s" repeatCount="indefinite"/><g><animateTransform attributeName="transform" type="translate" values="0,0; 0,-1.5; 0,0; 0,1.5; 0,0" dur="2s" repeatCount="indefinite"/><g><animateTransform attributeName="transform" type="rotate" values="0 16 16; 6 16 16; 0 16 16; -6 16 16; 0 16 16" dur="2.5s" repeatCount="indefinite"/><g transform="translate(6.5, 8) scale(0.7)"><path d="' + WHALE_D + '" fill="' + color + '"/></g></g></g></g>'
+        : '<g transform="translate(6.5, 8) scale(0.7)"><path d="' + WHALE_D + '" fill="' + color + '"/></g>';
+      const arrowD = open ? 'M 44 14 L 47 17 L 50 14' : 'M 44 17 L 47 14 L 50 17';
+      const breathe = running
+        ? '<animate attributeName="opacity" values="1; 0.3; 1" dur="1.5s" repeatCount="indefinite"/>'
+        : '';
+      return '<svg width="56" height="32" viewBox="0 0 56 32" fill="none" xmlns="http://www.w3.org/2000/svg">'
+        + '<rect x="0.5" y="0.5" width="55" height="31" rx="15.5" fill="' + bg + '" stroke="' + stroke + '"/>'
+        + rightZone
+        + '<line x1="38" y1="8" x2="38" y2="24" stroke="' + stroke + '" stroke-width="1.5" stroke-linecap="round"/>'
+        + glow
+        + whale
+        + '<path d="' + arrowD + '" stroke="' + color + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + breathe + '</path>'
+        + '</svg>';
+    }
+
     function pickDict(localeSvc) {
       try {
         const snap = localeSvc && typeof localeSvc.getLocale === 'function' ? localeSvc.getLocale() : null;
@@ -140,6 +162,9 @@ window.__ModuleLoader__.load({
     function closeMenu() {
       if (menuCleanup) { try { menuCleanup(); } catch (e) { /* ignore */ } menuCleanup = null; }
       if (menuEl) { if (menuEl.parentNode) menuEl.parentNode.removeChild(menuEl); menuEl = null; }
+      const cb = menuOnClose;
+      menuOnClose = null;
+      if (cb) { try { cb(); } catch (e) { /* ignore */ } }
     }
 
     function menuRow(label, control, hint) {
@@ -150,7 +175,7 @@ window.__ModuleLoader__.load({
       return row;
     }
 
-    function openMenu(anchor, sid) {
+    function openMenu(anchor, sid, onClose) {
       closeMenu();
       const stl = el('style');
       stl.textContent = CSS;
@@ -302,6 +327,7 @@ window.__ModuleLoader__.load({
       document.addEventListener('mousedown', onDoc, true);
       document.addEventListener('keydown', onKey, true);
       menuEl = m;
+      menuOnClose = typeof onClose === 'function' ? onClose : null;
       menuCleanup = function () {
         document.removeEventListener('mousedown', onDoc, true);
         document.removeEventListener('keydown', onKey, true);
@@ -317,6 +343,10 @@ window.__ModuleLoader__.load({
           const view = state[0];
           const setView = state[1];
           const wrapRef = React.useRef(null);
+          const menuState = React.useState(false);
+          const menuOpen = menuState[0];
+          const setMenuOpen = menuState[1];
+          const aliveRef = React.useRef(true);
 
           React.useEffect(function () {
             let dead = false;
@@ -337,6 +367,19 @@ window.__ModuleLoader__.load({
             return function () { dead = true; clearInterval(iv); };
           }, [sid]);
 
+          React.useEffect(function () {
+            aliveRef.current = true;
+            return function () {
+              aliveRef.current = false;
+              closeMenu();
+            };
+          }, []);
+
+          React.useEffect(function () {
+            closeMenu();
+            setMenuOpen(false);
+          }, [sid]);
+
           function onClick() {
             const next = !view.running;
             setView(function (v) { return Object.assign({}, v, { pending: true }); });
@@ -352,6 +395,15 @@ window.__ModuleLoader__.load({
               .catch(function (e) { setView(function (v) { return Object.assign({}, v, { pending: false, online: false, err: String(e && e.message || e) }); }); });
           }
 
+          function toggleMenu(ev) {
+            ev.stopPropagation();
+            if (menuOpen) { closeMenu(); return; }
+            openMenu(wrapRef.current, sid, function () {
+              if (aliveRef.current) setMenuOpen(false);
+            });
+            setMenuOpen(true);
+          }
+
           const tip = VER + ' · ' + (view.online === false
             ? t.offline
             : view.pending ? t.busy
@@ -359,43 +411,31 @@ window.__ModuleLoader__.load({
             + ' · session:' + (sid === 'no-session' ? '—' : sid.slice(0, 8))
             + ' 路由:' + (view.online === null ? '?' : view.online ? 'ok' : '✗ ' + (view.err || ''));
 
-          return h('div', { className: 'pmo-ctl' + (view.running ? ' pmo-on' : ''), ref: wrapRef },
+          return h('div', { className: 'pmo-ctl', ref: wrapRef },
             h('style', null, CSS),
+            h('div', {
+              className: 'pmo-svg',
+              'aria-hidden': true,
+              dangerouslySetInnerHTML: { __html: pillSvg(view.running, menuOpen) },
+            }),
             h('button', {
               type: 'button',
-              className: 'pmo-btn',
+              className: 'pmo-zone left',
               title: tip,
               'aria-label': view.running ? t.stop : t.start,
               'aria-pressed': view.running,
               disabled: view.pending,
               onClick: onClick,
-            },
-              h('svg', {
-                viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
-                'stroke-width': 2.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': true,
-              },
-                h('path', { d: 'M12 19V5' }),
-                h('path', { d: 'M5 12l7-7 7 7' }),
-              ),
-            ),
+            }),
             h('button', {
               type: 'button',
-              className: 'pmo-caret-btn',
+              className: 'pmo-zone right',
               title: VER + ' · ' + t.menuTitle + '（模型 / 思考等级 / 轮数）',
               'aria-label': t.menuAria,
               'aria-haspopup': 'dialog',
-              onClick: function (ev) {
-                ev.stopPropagation();
-                openMenu(wrapRef.current, sid);
-              },
-            },
-              h('svg', {
-                viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
-                'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': true,
-              },
-                h('path', { d: 'M6 9l6 6 6-6' }),
-              ),
-            ),
+              'aria-expanded': menuOpen,
+              onClick: toggleMenu,
+            }),
           );
         } catch (err) {
           return h('span', { className: 'pmo-strip', title: String(err) }, h('span', { className: 'pmo-bad' }), 'PMO按钮渲染异常:' + err);
