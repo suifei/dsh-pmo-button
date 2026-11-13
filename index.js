@@ -1,5 +1,5 @@
 /**
- * PMO button — Host half v0.11.1.
+ * PMO button — Host half v0.11.2.
  * Per-session armed set, turn buffers, child registry, and the once-per-session
  * identity-prompt flag are persisted (pmo-state.json), so restarts lose nothing.
  * The `session/event` feed drives two jobs for armed sessions:
@@ -22,6 +22,9 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 export const name = 'dsh-pmo-button'
 export const inject = ['webServer']
+/** Host-half version, logged on activation so an operator can tell which build
+ *  the running Host actually imported (hot reload vs stale module). */
+const HOST_VERSION = '0.11.2'
 
 /** The identity prompt delivered exactly once per session (user-authored 原文). */
 const ROLE_PROMPT_DEFAULT = [
@@ -51,7 +54,7 @@ const ROLE_PROMPT_DEFAULT = [
   '  → NEED_HUMAN，写清需要用户决定什么。',
   '- 用户原话之外的改进建议一律不提。',
   '- 通讯纪律：不要使用 send_message 向父代理发送消息；你的结束语会随结算自动回传父会话，无需另发。',
-  '- 签到与审查分离：收到签到（无 [用户] 新指令的 [待命] 消息）时，只回复一句确认并保持待命，禁止输出 STATUS/DONE；只有收到含 [用户] 新指令的转发块时，才按规程输出 STATUS。',
+  '- 签到与审查分离：收到签到（无 [用户] 新指令的 [待命] 消息）时，只回复一句确认并保持待命，禁止输出 STATUS/DONE；收到「审查请求」（含 [用户] 新指令）或「续轮审查请求」（无新 [用户]，主代理在执行你上轮的 CONTINUE 下一步）时，按规程审查并输出 STATUS。',
 ].join('\n')
 
 /** @typedef {{ logFile: string, maxChars: number, provider: string, childLabel: string, greet: string, rolePrompt: string }} Config */
@@ -104,6 +107,12 @@ export function apply(ctx, config) {
   const modelFps = new Map()
   /** sid -> true: the last forward to the child was a review request (gates STATUS parsing) */
   const lastForwardReview = new Map()
+  /** sid -> true: this session earned exactly one more forward — a fresh user turn,
+   *  or a whole-line STATUS: CONTINUE verdict. The ticket is consumed by the forward
+   *  and is never granted by a settlement notice, which is what breaks the echo loop
+   *  (f5bb, 2026-11-13: every settlement woke the parent, and every parent turn was
+   *  forwarded back to the same child until the 20-round cap). */
+  const forwardAllowed = new Map()
   /** sid -> review rounds forwarded since the last user input (maxRounds cap) */
   const rounds = new Map()
   /** 'provider/model' -> display label (resolved via ctx.llm.listModels) */
@@ -213,16 +222,50 @@ export function apply(ctx, config) {
   function redact(s) {
     return String(s ?? '').replace(/npm_[A-Za-z0-9]{20,}/g, 'npm_***已脱敏***')
   }
+  /** Per-injection cap: a settlement notice or a skill-catalog snapshot is
+   *  optional context, never the review target. */
+  const INJECT_BLOCK_MAX = 800
+  /** Build a review forward with the review target first: [用户] and [主代理]
+   *  are placed before any injection, and injections only consume the leftover
+   *  budget. Before 0.11.2 a settlement notice plus skill-catalog snapshots could
+   *  fill the whole 2×maxChars budget; the child then received only [注入] lines
+   *  (f5bb turn=98, 2026-11-13: 13,398 chars clipped to 8,000 before the parent
+   *  reply, so it correctly answered "不构成审查请求"). */
+  function composeForward(turn, userBlock, mainBlock, otherTasks) {
+    const budget = config.maxChars * 2
+    const head = !userBlock && mainBlock
+      ? `【PMO 轮次转发 · turn=${turn} · 续轮审查请求】本轮无新 [用户] 指令；主代理正在执行你上一轮 STATUS: CONTINUE 的"下一步"，请复审其答复并按规程输出 STATUS。\n`
+      : `【PMO 轮次转发 · turn=${turn} · 审查请求】以下为用户本轮新输入（[PMO]/[图片]）与主代理答复，请按规程审查并输出 STATUS。\n`
+    let body = head
+    if (userBlock) body += userBlock + '\n'
+    if (mainBlock) {
+      // Reserve room for the omission marker plus at least one small injection.
+      body += clip(mainBlock, Math.max(200, budget - body.length - 260))
+    }
+    const injections = []
+    for (const t of otherTasks) injections.push(`[注入:${t.src}] ${clip(t.text, INJECT_BLOCK_MAX)}`)
+    let kept = 0
+    for (const line of injections) {
+      if (body.length + line.length + 1 > budget) break
+      body += '\n' + line
+      kept++
+    }
+    if (kept < injections.length) {
+      body += `\n[注入已省略 ${injections.length - kept} 项：转发预算不足（[用户]/[主代理] 优先）]`
+    }
+    return clip(redact(body), budget)
+  }
   /** Auto-stop: dim the button and gate forwarding WITHOUT deafening the
    * session listener — turn logging keeps running, and user speech (or a
    * button re-light) releases the gate so the loop can auto-resume. */
   function extinguish(sid, why) {
     stopped.add(sid)
     doneSet.add(sid)
+    forwardAllowed.delete(sid)
     saveState()
     append(`${stamp()}  [PMO] 自动熄灭：${why}（转发静默；用户发言或重新点亮按钮恢复）\n`)
   }
-  append(`${SEP}${stamp()}  [PMO 插件激活] 日志=${logPath}\n`)
+  append(`${SEP}${stamp()}  [PMO 插件激活 v${HOST_VERSION}] 日志=${logPath}\n`)
 
   // ---- text helpers ----------------------------------------------------------
   // Surface payloads nest the real message under data.message
@@ -296,14 +339,20 @@ export function apply(ctx, config) {
     const userTasks = (b?.tasks ?? []).filter((t) => !OTHER_SOURCES.has(t.src) && t.src !== '__attach__')
     const attachTasks = (b?.tasks ?? []).filter((t) => t.src === '__attach__')
     const otherTasks = (b?.tasks ?? []).filter((t) => OTHER_SOURCES.has(t.src))
-    // Real user speech re-opens the loop after a DONE gate; a DONE-gated turn
-    // is logged but not forwarded (breaks the settlement-echo cycle).
-    if (userTasks.length > 0 && (doneSet.has(sid) || rounds.has(sid) || stopped.has(sid))) {
-      doneSet.delete(sid)
-      stopped.delete(sid)
-      rounds.delete(sid)
-      saveState()
-      append(`${stamp()}  [轮次转发] DONE 闸门解除：检测到用户输入，循环恢复\n`)
+    // Real user speech is the only unconditional forwarding ticket; a DONE-gated
+    // turn is logged but not forwarded (breaks the settlement-echo cycle). A fresh
+    // instruction also supersedes any verdict still pending from the last forward.
+    const hasUser = userTasks.length > 0
+    if (hasUser) {
+      forwardAllowed.set(sid, true)
+      lastForwardReview.set(sid, false)
+      if (doneSet.has(sid) || rounds.has(sid) || stopped.has(sid)) {
+        doneSet.delete(sid)
+        stopped.delete(sid)
+        rounds.delete(sid)
+        saveState()
+        append(`${stamp()}  [轮次转发] DONE 闸门解除：检测到用户输入，循环恢复\n`)
+      }
     }
     const gated = doneSet.has(sid)
 
@@ -348,37 +397,51 @@ export function apply(ctx, config) {
     // ---- Phase-2 auto-loop: forward this turn's review blocks to the PMO child
     // (fire-and-forget; the child's STATUS closing line returns to this session
     // through the delivery:'parent' settlement notice and wakes the next step).
+    // Forwarding requires a ticket: fresh user speech in this turn, or a whole-line
+    // STATUS: CONTINUE verdict since the last forward. Settlement notices and
+    // system reminders never grant one, so they cannot pump the echo loop.
     const childId = children.get(sid)
+    const ticket = forwardAllowed.get(sid) === true
     if (gated) {
       append(`${stamp()}  [轮次转发] turn=${turn} 跳过：DONE 后静默（等待用户输入或重新启动）\n`)
-    } else if (childId && b && (b.texts?.length > 0 || b.tasks?.length > 0)) {
-      const parts = []
-      userTasks.forEach((t) => parts.push(`[用户] ${t.text}`))
-      otherTasks.forEach((t) => parts.push(`[注入:${t.src}] ${t.text}`))
-      attachTasks.forEach((t) => parts.push(t.text))
-      if (b.texts?.length > 0) parts.push(`[主代理] ${b.texts.join('\n\n---\n\n')}`)
-      const forward = clip(redact(`【PMO 轮次转发 · turn=${turn} · 审查请求】以下为用户本轮新输入（[PMO]/[图片]）与主代理完整答复，请按规程审查并输出 STATUS；若本轮无 [用户] 新指令，仅确认收到即可，不要输出 DONE。\n` + parts.join('\n')), config.maxChars * 2)
-      const agents = ctx.get('agents')
-      const agent = agents && typeof agents.get === 'function' ? agents.get(sid) : undefined
-      const subagentsSvc = ctx.get('subagents')
-      if (!agent || !subagentsSvc || typeof subagentsSvc.sendMessage !== 'function') {
-        append(`${stamp()}  [轮次转发] turn=${turn} 跳过：父会话无活跃 Agent 或 subagents 不可用\n`)
+    } else if (!ticket) {
+      append(`${stamp()}  [轮次转发] turn=${turn} 跳过：无用户输入且无 CONTINUE 判定（防回声）\n`)
+    } else if (!childId || !b) {
+      append(`${stamp()}  [轮次转发] turn=${turn} 跳过：无活跃子代理或空缓冲\n`)
+    } else {
+      // Attachments (images/files) are user material too: keep them in the
+      // protected block, never in the optional injection budget.
+      const userParts = userTasks.map((t) => `[用户] ${t.text}`)
+      for (const a of attachTasks) userParts.push(a.text)
+      const userBlock = userParts.join('\n')
+      const mainBlock = b.texts?.length > 0 ? `[主代理] ${b.texts.join('\n\n---\n\n')}` : ''
+      if (!userBlock && !mainBlock) {
+        append(`${stamp()}  [轮次转发] turn=${turn} 跳过：无可审材料（只有注入）\n`)
       } else {
-        const controller = new AbortController()
-        const effMax = effectiveFor(sid).maxRounds
-        lastForwardReview.set(sid, true)
-        Promise.resolve(subagentsSvc.sendMessage(agent, childId, [{ type: 'text', text: forward }], { signal: controller.signal }))
-          .then(() => {
-            const n = (rounds.get(sid) ?? 0) + 1
-            rounds.set(sid, n)
-            saveState()
-            append(`${stamp()}  [轮次转发] turn=${turn} 已送达 child=${String(childId).slice(0, 12)}…（第 ${n}${effMax > 0 ? '/' + effMax : ''} 轮审查）\n`)
-            if (effMax > 0 && n >= effMax) extinguish(sid, `达到最大审查轮数 ${effMax}`)
-          })
-          .catch((err) => {
-            lastForwardReview.set(sid, false)
-            append(`${stamp()}  [轮次转发] turn=${turn} 失败: ${err && err.message ? err.message : err}\n`)
-          })
+        const forward = composeForward(turn, userBlock, mainBlock, otherTasks)
+        const agents = ctx.get('agents')
+        const agent = agents && typeof agents.get === 'function' ? agents.get(sid) : undefined
+        const subagentsSvc = ctx.get('subagents')
+        if (!agent || !subagentsSvc || typeof subagentsSvc.sendMessage !== 'function') {
+          append(`${stamp()}  [轮次转发] turn=${turn} 跳过：父会话无活跃 Agent 或 subagents 不可用\n`)
+        } else {
+          const controller = new AbortController()
+          const effMax = effectiveFor(sid).maxRounds
+          forwardAllowed.delete(sid) // consumed: the next forward needs a fresh user turn or CONTINUE
+          lastForwardReview.set(sid, true)
+          Promise.resolve(subagentsSvc.sendMessage(agent, childId, [{ type: 'text', text: forward }], { signal: controller.signal }))
+            .then(() => {
+              const n = (rounds.get(sid) ?? 0) + 1
+              rounds.set(sid, n)
+              saveState()
+              append(`${stamp()}  [轮次转发] turn=${turn} 已送达 child=${String(childId).slice(0, 12)}…（第 ${n}${effMax > 0 ? '/' + effMax : ''} 轮审查）\n`)
+              if (effMax > 0 && n >= effMax) extinguish(sid, `达到最大审查轮数 ${effMax}`)
+            })
+            .catch((err) => {
+              lastForwardReview.set(sid, false)
+              append(`${stamp()}  [轮次转发] turn=${turn} 失败: ${err && err.message ? err.message : err}\n`)
+            })
+        }
       }
     }
     buffers.set(sid, emptyBuffer())
@@ -447,6 +510,11 @@ export function apply(ctx, config) {
       request,
     })
     children.set(sid, String(act.childId))
+    lastForwardReview.set(sid, false)
+    // Record the fingerprint of the model the child was born with, so a later
+    // override change is detected even for state written before the field existed
+    // (0.11.2: pre-upgrade sessions had no fingerprint and silently skipped the reset).
+    modelFps.set(sid, JSON.stringify([eff.provider, eff.model, eff.effort]))
     if (needRole) {
       roleSent.set(sid, true)
       append(`${stamp()}  [身份提示词] 已随首条消息一次性下发 child=${String(act.childId).slice(0, 12)}…（本会话不会重复）\n`)
@@ -487,13 +555,16 @@ export function apply(ctx, config) {
         // Recognize the PMO child's STATUS verdict — but ONLY when the last
         // forward was a review request, and ONLY on a whole STATUS line:
         // check-in acks and prose that merely mention "STATUS: X" must never
-        // match (anchored ^…$ with the m flag).
+        // match (anchored ^…$ with the m flag). A CONTINUE verdict grants exactly
+        // one more forward; silence, a check-in ack, or plain prose grants none,
+        // so a reviewer that stops judging cannot pump the echo loop.
         const src2 = event.data?.message?.source ?? event.data?.source
         if (src2 && (src2.kind === 'subagent-settled' || src2.kind === 'agent-message')) {
+          const fromChild = src2.senderSessionId ? ` child=${String(src2.senderSessionId).slice(0, 12)}…` : ''
           const reviewText = lastForwardReview.get(sid) === true ? redact(textOf(event.data)) : ''
           const m = reviewText.match(/^\s*STATUS:\s*(CONTINUE|DONE|NEED_HUMAN)\s*$/m)
           if (m) {
-            append(`${stamp()}  [PMO审查] STATUS=${m[1]}（来自子代理）\n`)
+            append(`${stamp()}  [PMO审查] STATUS=${m[1]}${fromChild} session=${sid.slice(0, 12)}…（来自子代理）\n`)
             // Pair the notice with the authority-alignment instruction: the
             // review speaks with user authority — execute its next step unless
             // the parent disagrees, and then it must stop and say why.
@@ -512,7 +583,14 @@ export function apply(ctx, config) {
             if (m[1] !== 'CONTINUE') {
               doneSet.add(sid)
               extinguish(sid, `STATUS=${m[1]}（循环停转）`)
+            } else {
+              forwardAllowed.set(sid, true)
             }
+          } else if (lastForwardReview.get(sid) === true) {
+            // The reviewer answered a forward without a verdict (silent, an ack,
+            // or prose): grant nothing. The next settlement-triggered turn is
+            // skipped by the ticket gate above, which is the anti-echo boundary.
+            append(`${stamp()}  [轮次转发] 子代理本轮无 STATUS 判定${fromChild} session=${sid.slice(0, 12)}…（不授予新转发票，防回声）\n`)
           }
         }
         saveState()
@@ -672,14 +750,19 @@ export function apply(ctx, config) {
       if (on) {
         // A changed effective review model invalidates the existing child: its
         // model is baked into the durable descriptor, so reset to a fresh
-        // child (review memory clears — documented trade-off).
+        // child (review memory clears — documented trade-off). Pre-upgrade state
+        // has no fingerprint; if any override is configured, treat the existing
+        // child as unverified and reset it rather than silently keeping the old
+        // model (0.11.2).
         const eff = effectiveFor(sid)
         const fp = JSON.stringify([eff.provider, eff.model, eff.effort])
         const prev = modelFps.get(sid)
-        if (prev !== undefined && prev !== fp && children.has(sid)) {
+        const hasModelOverride = Boolean(eff.provider || eff.model || eff.effort)
+        const modelChanged = prev === undefined ? hasModelOverride : prev !== fp
+        if (modelChanged && children.has(sid)) {
           children.delete(sid)
           roleSent.delete(sid)
-          append(`${stamp()}  [子代理] 审查模型配置变更，已重置审查官：下次启动创建新子代理（新审查模型：${eff.provider || '继承主会话'}/${eff.model || '继承主会话'}${eff.effort ? ' ' + eff.effort : ''}；审查记忆清零）\n`)
+          append(`${stamp()}  [子代理] 审查模型配置变更或指纹缺失，已重置审查官：下次启动创建新子代理（审查模型：${eff.provider || '继承主会话'}/${eff.model || '继承主会话'}${eff.effort ? ' ' + eff.effort : ''}；审查记忆清零）\n`)
         }
         modelFps.set(sid, fp)
         enabled.add(sid)
@@ -687,7 +770,12 @@ export function apply(ctx, config) {
         stopped.delete(sid)
         doneSet.delete(sid)
         rounds.delete(sid)
-      } else enabled.delete(sid)
+        lastForwardReview.delete(sid)
+        forwardAllowed.delete(sid)
+      } else {
+        enabled.delete(sid)
+        forwardAllowed.delete(sid)
+      }
       saveState()
       append(`${SEP}${stamp()}  [PMO ${on ? '启动' : '停止'}] session=${sid.slice(0, 12)}…\n`)
       if (on && sid !== 'unknown') {
