@@ -6,7 +6,7 @@
 [![license](https://img.shields.io/npm/l/@suifei/dsh-pmo-button.svg)](./LICENSE)
 [![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-plugin-blue)](https://github.com/deepseek-ai/deepseek-harness)
 
-> 输入框旁的一枚**红鲸鱼胶囊** —— 一键为当前会话挂载一位**常驻 PMO 审查官**（持久子代理）。
+> 输入框旁的一枚**红鲸鱼胶囊** —— 为 AI 会话挂载一位**“资深项目总监”**：常驻 PMO 审查官（持久子代理）。
 > 你的每一轮工作自动转发给它按 **STATUS 协议**审查：`CONTINUE` 自动推进、`DONE` 收工、`NEED_HUMAN` 找你。
 > 全程无人工干预，让会话自己把工作循环推进到底。
 
