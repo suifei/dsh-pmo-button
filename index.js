@@ -1,5 +1,5 @@
 /**
- * PMO button — Host half v0.7.4.
+ * PMO button — Host half v0.8.0.
  * Per-session armed set, turn buffers, child registry, and the once-per-session
  * identity-prompt flag are persisted (pmo-state.json), so restarts lose nothing.
  * The `session/event` feed drives two jobs for armed sessions:
@@ -67,6 +67,12 @@ export const Config = Schema.object({
   rolePrompt: Schema.string().default(ROLE_PROMPT_DEFAULT),
   /** Review-round cap per session since the last user input; 0 disables the cap. */
   maxRounds: Schema.number().default(20),
+  /** Child provider override; empty inherits the parent session's provider. */
+  childModelProvider: Schema.string().default(''),
+  /** Child model override; empty inherits the parent session's model. */
+  childModel: Schema.string().default(''),
+  /** Child reasoning-effort override; empty inherits the parent session's effort. */
+  childReasoningEffort: Schema.string().default(''),
 })
 
 const SEP = '\n' + '─'.repeat(68) + '\n'
@@ -386,12 +392,21 @@ export function apply(ctx, config) {
       ...roleBlocks,
       { type: 'text', text: config.greet },
     ]
+    // agentOptions overrides (spawn capability): empty strings inherit the
+    // parent session's provider/model/reasoning effort (spawn README: the
+    // child inherits provider, model, reasoning effort unless agentOptions).
+    const overrides = {}
+    if (config.childModelProvider) overrides.provider = config.childModelProvider
+    if (config.childModel) overrides.model = config.childModel
+    if (config.childReasoningEffort) overrides.reasoningEffort = config.childReasoningEffort
+    const request = { parent: agent, prompt: promptBlocks, description: config.childLabel }
+    if (Object.keys(overrides).length > 0) request.agentOptions = overrides
     const act = await subagents.startActivation({
       provider: config.provider,
       label: config.childLabel,
       delivery: 'parent',
       signal: controller.signal,
-      request: { parent: agent, prompt: promptBlocks, description: config.childLabel },
+      request,
     })
     children.set(sid, String(act.childId))
     if (needRole) {

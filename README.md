@@ -58,6 +58,22 @@ dsh plugin --profile <你的profile> add github:suifei/dsh-pmo-button
 | `greet` | `hi` | 每次启动发给子代理的问候文本 |
 | `rolePrompt` | （内置审查规程原文） | 身份提示词；每会话仅发一次，置空禁用 |
 | `maxRounds` | `20` | 自上次用户输入以来的审查轮数上限（0 = 不限），超出自动熄灭 |
+| `childModelProvider` | （空 = 继承主会话） | 子代理提供方覆盖，如 `deepseek-official` |
+| `childModel` | （空 = 继承主会话） | 子代理模型覆盖，如 `deepseek-v4.1-flash` |
+| `childReasoningEffort` | （空 = 继承主会话） | 子代理思考等级覆盖，如 `max` |
+
+### 🔀 异构审查（审查方 ≠ 执行方）
+
+三个 `childModel*` 字段留空时，子代理**自动继承主会话**的提供方/模型/思考等级；全部留空即"同模型互审"。想要"盲区不同"的异构审查，把三项指向另一个模型即可：
+
+```yaml
+config:
+  childModelProvider: deepseek-official
+  childModel: deepseek-v4.1-flash
+  childReasoningEffort: max
+```
+
+> 前提：该提供方已在 Harness 中配置好凭据；id 以模型选择器目录为准。指定的模型/等级会写入子代理持久描述符——**冷恢复按描述符还原，不会漂回主会话模型**。
 
 ## 📜 日志格式
 
