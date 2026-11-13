@@ -51,6 +51,23 @@ dsh plugin --profile <你的profile> add github:suifei/dsh-pmo-button
 | `DONE` | 目标达成，无遗留问题 | **自动熄灭**（回声静默） |
 | `NEED_HUMAN` | 需要用户决策/澄清/授权 | **自动熄灭**，结论中写明需要你决定什么 |
 
+## 🖼️ 界面与配置
+
+**全局配置入口**：`DSH → 插件 → 滚动到底部 → 点击 PMO button 插件 → 下方配置`。所有字段**修改即保存并热生效**。
+
+**建议**：审查模型不要继承主会话，给 PMO 选一个**不同的模型**做异构审查，并把**思考等级拉到该模型支持的最高档**：
+
+- `deepseek-flash` → `max`
+- `qwen` → `high`（qwen 的最高档，provider 会映射到 xhigh）
+
+<p align="center"><img src="https://raw.githubusercontent.com/suifei/dsh-pmo-button/main/docs/pmo-global-config.png" width="820" alt="PMO 全局配置：DSH → 插件 → PMO button → 下方配置"></p>
+
+<p align="center"><sub>全局配置：审查模型 / 思考等级 / 轮数 / 提供方 / 身份提示词；截图是默认“继承”，建议改成异构模型并把思考拉满。</sub></p>
+
+<p align="center"><img src="https://raw.githubusercontent.com/suifei/dsh-pmo-button/main/docs/pmo-button-and-child.png" width="820" alt="输入框旁的 PMO 鲸鱼胶囊与 PMO 子代理会话"></p>
+
+<p align="center"><sub>输入框旁的鲸鱼胶囊（左开关 / 右设置）；右栏是 PMO 子代理会话。</sub></p>
+
 ## 🆚 与 Goal 的差异：同一张嘴，还是另一双眼睛？
 
 DSH 的 **goal** 与 **PMO 按钮**都会让会话“自己往下走”，但实现路径不同。读 `dsh-goal` / `dsh-goal-round-driver` / `dsh-tool-goal` 的源码（dsh `0.2.2-rc.1`）可以确认：
@@ -215,7 +232,7 @@ dsh --profile <你的profile> --dump-config   # 验证插件树
 
 ### 🎛️ 两层配置：全局 + 会话级
 
-- **全局配置**：插件 → PMO 按钮 → 页面内的**配置面板**（分区：审查模型（模型 / 思考等级）/ 运行（轮数 / 截断阈值 / 提供方 / 标签）/ 身份与问候（问候 / 身份提示词）/ 日志）。所有字段**改后自动保存并热生效**，经 configEditor 用户配置层持久化，升级不丢。
+- **全局配置**：`DSH → 插件 → 滚动到底部 → 点击 PMO button 插件 → 下方配置`（分区：审查模型（模型 / 思考等级）/ 运行（轮数 / 截断阈值 / 提供方 / 标签）/ 身份与问候（问候 / 身份提示词）/ 日志）。所有字段**修改即保存并热生效**，经 configEditor 用户配置层持久化，升级不丢。建议审查模型选一个不同于主会话的模型，思考等级选该模型支持的最高档（qwen `high`；deepseek-flash `max`）。
 - **会话级快捷菜单**：胶囊右区的 chevron，弹出当前会话专属的快捷设置（审查模型下拉 / 思考等级下拉 / 轮数上限；轮数留空显示"继承全局（N 轮）"），**只影响当前会话**，改完立即生效。
 - **优先级**：会话级覆盖 > 全局默认 > 继承主会话模型。
 - **注意**：会话级变更审查模型会在下次启动时**重置子代理**（新模型写入持久描述符，审查记忆清零——菜单中均有提示）。
