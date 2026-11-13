@@ -3,3 +3,4 @@ node_modules/
 logs/
 pmo-state.json
 pmo-state.json.tmp
+test/out/

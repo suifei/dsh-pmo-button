@@ -129,7 +129,8 @@ STATUS: CONTINUE …（审查官结束语全文）
 ```sh
 git clone https://github.com/suifei/dsh-pmo-button.git
 cd dsh-pmo-button && pnpm install --ignore-workspace
-npm test        # node --check 双端语法校验
+npm test            # 语法校验 + 假 ctx 回归（test/review-gate.test.mjs）
+npm run test:live   # 真实 dsh 运行时 + 剧本假模型，跑完整双线路（见 test/README.md）
 ```
 
 本地调试以链接方式安装，配置热替换，改完 `cordis.patch.yml` 即时生效：

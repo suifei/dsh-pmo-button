@@ -29,7 +29,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --check index.js && node --check client.js && node --test test/review-gate.test.mjs"
+    "test": "node --check index.js && node --check client.js && node --test test/review-gate.test.mjs",
+    "test:live": "node test/live/run.mjs"
   },
   "publishConfig": {
     "access": "public"
