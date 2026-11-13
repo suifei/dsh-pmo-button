@@ -1,5 +1,5 @@
 /**
- * PMO button — Host half v0.10.0.
+ * PMO button — Host half v0.11.0.
  * Per-session armed set, turn buffers, child registry, and the once-per-session
  * identity-prompt flag are persisted (pmo-state.json), so restarts lose nothing.
  * The `session/event` feed drives two jobs for armed sessions:
@@ -98,6 +98,12 @@ export function apply(ctx, config) {
   const doneSet = new Set()
   /** sid -> true: auto-stopped (STATUS !== CONTINUE or round cap) — button dimmed, listener live */
   const stopped = new Set()
+  /** sid -> {provider?, model?, effort?, maxRounds?}: per-session overrides over global config */
+  const overrides = new Map()
+  /** sid -> fingerprint JSON of the effective review model (reset detector) */
+  const modelFps = new Map()
+  /** sid -> true: the last forward to the child was a review request (gates STATUS parsing) */
+  const lastForwardReview = new Map()
   /** sid -> review rounds forwarded since the last user input (maxRounds cap) */
   const rounds = new Map()
   /** persisted fingerprint of the child-model override triple (reset detector) */
@@ -149,17 +155,34 @@ export function apply(ctx, config) {
     if (parsed?.stopped && typeof parsed.stopped === 'object') {
       for (const sid of Object.keys(parsed.stopped)) stopped.add(sid)
     }
+    if (parsed?.modelFps && typeof parsed.modelFps === 'object') {
+      for (const [sid, f] of Object.entries(parsed.modelFps)) modelFps.set(sid, String(f))
+    }
+    if (parsed?.lastForwardReview && typeof parsed.lastForwardReview === 'object') {
+      for (const sid of Object.keys(parsed.lastForwardReview)) lastForwardReview.set(sid, true)
+    }
+    if (parsed?.overrides && typeof parsed.overrides === 'object') {
+      for (const [sid, ov] of Object.entries(parsed.overrides)) {
+        if (ov && typeof ov === 'object') overrides.set(sid, { ...ov })
+      }
+    }
     if (parsed?.rounds && typeof parsed.rounds === 'object') {
       for (const [sid, n] of Object.entries(parsed.rounds)) rounds.set(sid, Number(n) || 0)
     }
     if (typeof parsed?.modelFp === 'string') stateModelFp = parsed.modelFp
+    if (parsed?.modelFps && typeof parsed.modelFps === 'object') {
+      for (const [sid, f] of Object.entries(parsed.modelFps)) modelFps.set(sid, String(f))
+    }
+    if (parsed?.lastForwardReview && typeof parsed.lastForwardReview === 'object') {
+      for (const sid of Object.keys(parsed.lastForwardReview)) lastForwardReview.set(sid, true)
+    }
   } catch { /* first run or unreadable state */ }
 
   function saveState() {
     const kept = {}
     for (const [sid, b] of buffers) if (enabled.has(sid)) kept[sid] = b
     const doc = {
-      version: 8,
+      version: 9,
       enabled: [...enabled],
       turnCounts: Object.fromEntries(turnCounts),
       buffers: kept,
@@ -167,8 +190,10 @@ export function apply(ctx, config) {
       roleSent: Object.fromEntries([...roleSent.keys()].map((sid) => [sid, true])),
       doneSet: Object.fromEntries([...doneSet.keys()].map((sid) => [sid, true])),
       stopped: Object.fromEntries([...stopped.keys()].map((sid) => [sid, true])),
+      overrides: Object.fromEntries([...overrides].map(([k, v]) => [k, v])),
+      modelFps: Object.fromEntries(modelFps),
+      lastForwardReview: Object.fromEntries([...lastForwardReview.keys()].map((sid) => [sid, true])),
       rounds: Object.fromEntries(rounds),
-      modelFp: stateModelFp,
     }
     try {
       fs.mkdirSync(path.dirname(statePath), { recursive: true })
@@ -256,6 +281,15 @@ export function apply(ctx, config) {
     }
     return out
   }
+  function effectiveFor(sid) {
+    const ov = overrides.get(sid) || {}
+    return {
+      provider: ov.provider || config.childModelProvider,
+      model: ov.model || config.childModel,
+      effort: ov.effort || config.childReasoningEffort,
+      maxRounds: ov.maxRounds !== undefined && ov.maxRounds !== null ? Number(ov.maxRounds) : config.maxRounds,
+    }
+  }
   function bufferFor(sid) {
     let b = buffers.get(sid)
     if (!b) { b = emptyBuffer(); buffers.set(sid, b) }
@@ -340,15 +374,20 @@ export function apply(ctx, config) {
         append(`${stamp()}  [轮次转发] turn=${turn} 跳过：父会话无活跃 Agent 或 subagents 不可用\n`)
       } else {
         const controller = new AbortController()
+        const effMax = effectiveFor(sid).maxRounds
+        lastForwardReview.set(sid, true)
         Promise.resolve(subagentsSvc.sendMessage(agent, childId, [{ type: 'text', text: forward }], { signal: controller.signal }))
           .then(() => {
             const n = (rounds.get(sid) ?? 0) + 1
             rounds.set(sid, n)
             saveState()
-            append(`${stamp()}  [轮次转发] turn=${turn} 已送达 child=${String(childId).slice(0, 12)}…（第 ${n}${config.maxRounds > 0 ? '/' + config.maxRounds : ''} 轮审查）\n`)
-            if (config.maxRounds > 0 && n >= config.maxRounds) extinguish(sid, `达到最大审查轮数 ${config.maxRounds}`)
+            append(`${stamp()}  [轮次转发] turn=${turn} 已送达 child=${String(childId).slice(0, 12)}…（第 ${n}${effMax > 0 ? '/' + effMax : ''} 轮审查）\n`)
+            if (effMax > 0 && n >= effMax) extinguish(sid, `达到最大审查轮数 ${effMax}`)
           })
-          .catch((err) => append(`${stamp()}  [轮次转发] turn=${turn} 失败: ${err && err.message ? err.message : err}\n`))
+          .catch((err) => {
+            lastForwardReview.set(sid, false)
+            append(`${stamp()}  [轮次转发] turn=${turn} 失败: ${err && err.message ? err.message : err}\n`)
+          })
       }
     }
     buffers.set(sid, emptyBuffer())
@@ -384,6 +423,7 @@ export function apply(ctx, config) {
         saveState()
         append(`${stamp()}  [身份提示词] 已随问候一次性下发 child=${String(existing).slice(0, 12)}…（本会话不会重复）\n`)
       }
+      lastForwardReview.set(sid, false)
       append(`${stamp()}  [子代理] 已向持久会话发送问候 child=${String(existing).slice(0, 12)}… msg=${String(mid).slice(0, 8)}… text=${config.greet}\n`)
       return
     }
@@ -398,15 +438,16 @@ export function apply(ctx, config) {
       ...roleBlocks,
       { type: 'text', text: config.greet },
     ]
-    // agentOptions overrides (spawn capability): empty strings inherit the
-    // parent session's provider/model/reasoning effort (spawn README: the
-    // child inherits provider, model, reasoning effort unless agentOptions).
-    const overrides = {}
-    if (config.childModelProvider) overrides.provider = config.childModelProvider
-    if (config.childModel) overrides.model = config.childModel
-    if (config.childReasoningEffort) overrides.reasoningEffort = config.childReasoningEffort
+    // agentOptions overrides (spawn capability): resolution order — session
+    // override (per-session menu) → global config → inherit the parent
+    // session's provider/model/reasoning effort (spawn README).
+    const eff = effectiveFor(sid)
+    const agentOptions = {}
+    if (eff.provider) agentOptions.provider = eff.provider
+    if (eff.model) agentOptions.model = eff.model
+    if (eff.effort) agentOptions.reasoningEffort = eff.effort
     const request = { parent: agent, prompt: promptBlocks, description: config.childLabel }
-    if (Object.keys(overrides).length > 0) request.agentOptions = overrides
+    if (Object.keys(agentOptions).length > 0) request.agentOptions = agentOptions
     const act = await subagents.startActivation({
       provider: config.provider,
       label: config.childLabel,
@@ -452,11 +493,14 @@ export function apply(ctx, config) {
           : sourceKind(event.data)
         b.tasks.push({ src: srcKind, text: redact(text) })
         for (const s of nonTextSummaries(event.data)) b.tasks.push({ src: '__attach__', text: s })
-        // Recognize the PMO child's STATUS protocol from its settlement notice
-        // or direct adjacent message, and record the review verdict.
+        // Recognize the PMO child's STATUS verdict — but ONLY when the last
+        // forward was a review request, and ONLY on a whole STATUS line:
+        // check-in acks and prose that merely mention "STATUS: X" must never
+        // match (anchored ^…$ with the m flag).
         const src2 = event.data?.message?.source ?? event.data?.source
         if (src2 && (src2.kind === 'subagent-settled' || src2.kind === 'agent-message')) {
-          const m = textOf(event.data).match(/STATUS:\s*(CONTINUE|DONE|NEED_HUMAN)/)
+          const reviewText = lastForwardReview.get(sid) === true ? redact(textOf(event.data)) : ''
+          const m = reviewText.match(/^\s*STATUS:\s*(CONTINUE|DONE|NEED_HUMAN)\s*$/m)
           if (m) {
             append(`${stamp()}  [PMO审查] STATUS=${m[1]}（来自子代理）\n`)
             // Pair the notice with the authority-alignment instruction: the
@@ -578,6 +622,50 @@ export function apply(ctx, config) {
       await editor.edit(entry, () => ({ ...validated }))
       return json({ ok: true, config: validated })
     }
+    if (request.method === 'GET' && rest === '/models') {
+      // The same catalog the composer's model selector consumes: providers ×
+      // advertised models (id + display name).
+      const llm = ctx.get('llm')
+      if (!llm || typeof llm.listProviders !== 'function') return json({ ok: false, error: 'llm 服务不可用' }, 400)
+      const out = []
+      const providers = await llm.listProviders()
+      for (const p of Array.isArray(providers) ? providers : []) {
+        try {
+          const models = await llm.listModels(p)
+          if (Array.isArray(models)) {
+            out.push({
+              provider: p,
+              models: models.map((m) => ({ id: m.id ?? m.model ?? '', name: m.name ?? m.label ?? m.id ?? m.model ?? '' })),
+            })
+          }
+        } catch { /* catalog-less provider: skip */ }
+      }
+      return json({ ok: true, providers: out })
+    }
+    if (request.method === 'GET' && rest === '/session-config') {
+      const sid = url.searchParams.get('session') ?? 'unknown'
+      return json({ ok: true, sessionId: sid, override: overrides.get(sid) || null })
+    }
+    if (request.method === 'GET' && rest === '/session-config/set') {
+      const sid = url.searchParams.get('session')
+      if (!sid || sid === 'unknown') return json({ ok: false, error: 'missing session' }, 400)
+      const cur = { ...(overrides.get(sid) || {}) }
+      for (const k of ['provider', 'model', 'effort']) {
+        if (url.searchParams.has(k)) {
+          const v = String(url.searchParams.get(k) || '')
+          if (v) cur[k] = v
+          else delete cur[k]
+        }
+      }
+      if (url.searchParams.has('maxRounds')) {
+        const n = Math.floor(Number(url.searchParams.get('maxRounds')))
+        if (Number.isFinite(n) && n > 0) cur.maxRounds = n
+        else delete cur.maxRounds
+      }
+      overrides.set(sid, cur)
+      saveState()
+      return json({ ok: true, sessionId: sid, override: cur, effective: effectiveFor(sid) })
+    }
     if (rest === '/toggle') {
       let sid, on
       if (request.method === 'GET') {
@@ -591,16 +679,18 @@ export function apply(ctx, config) {
         on = Boolean(body?.enabled)
       }
       if (on) {
-        // A changed model override invalidates the existing child: its model
-        // is baked into the durable descriptor, so reset to a fresh child
-        // (review memory clears — documented trade-off).
-        const fp = JSON.stringify([config.childModelProvider, config.childModel, config.childReasoningEffort])
-        if (stateModelFp !== undefined && stateModelFp !== fp && children.has(sid)) {
+        // A changed effective review model invalidates the existing child: its
+        // model is baked into the durable descriptor, so reset to a fresh
+        // child (review memory clears — documented trade-off).
+        const eff = effectiveFor(sid)
+        const fp = JSON.stringify([eff.provider, eff.model, eff.effort])
+        const prev = modelFps.get(sid)
+        if (prev !== undefined && prev !== fp && children.has(sid)) {
           children.delete(sid)
           roleSent.delete(sid)
-          append(`${stamp()}  [子代理] 模型配置变更，已重置审查官：下次启动创建新子代理（新审查模型：${config.childModelProvider || '继承主会话'}/${config.childModel || '继承主会话'}${config.childReasoningEffort ? ' ' + config.childReasoningEffort : ''}；审查记忆清零）\n`)
+          append(`${stamp()}  [子代理] 审查模型配置变更，已重置审查官：下次启动创建新子代理（新审查模型：${eff.provider || '继承主会话'}/${eff.model || '继承主会话'}${eff.effort ? ' ' + eff.effort : ''}；审查记忆清零）\n`)
         }
-        stateModelFp = fp
+        modelFps.set(sid, fp)
         enabled.add(sid)
         turnCounts.set(sid, turnCounts.get(sid) ?? 0)
         stopped.delete(sid)
