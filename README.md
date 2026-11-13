@@ -28,11 +28,18 @@
 ## 📦 安装
 
 ```sh
-# 从 npm
+# 默认桌面环境（desktop profile）
+dsh plugin --profile desktop add @suifei/dsh-pmo-button
+
+# 默认 Web 环境（web profile）
+dsh plugin --profile web add @suifei/dsh-pmo-button
+
+# 自定义 profile
 dsh plugin --profile <你的profile> add @suifei/dsh-pmo-button
 
-# 或从 GitHub 源码
-dsh plugin --profile <你的profile> add github:suifei/dsh-pmo-button
+# 或从 GitHub 源码（按运行环境选择 profile）
+dsh plugin --profile desktop add github:suifei/dsh-pmo-button
+dsh plugin --profile web add github:suifei/dsh-pmo-button
 ```
 
 依赖 DeepSeek Harness 默认 base 组合（`subagent` / `spawn-in-process` / `session-persistence` / `session-query` / `compaction` 均为默认挂载），无需额外配置。

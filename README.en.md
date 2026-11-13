@@ -28,11 +28,18 @@
 ## 📦 Install
 
 ```sh
-# from npm
+# Default desktop environment (desktop profile)
+dsh plugin --profile desktop add @suifei/dsh-pmo-button
+
+# Default web environment (web profile)
+dsh plugin --profile web add @suifei/dsh-pmo-button
+
+# Custom profile
 dsh plugin --profile <your-profile> add @suifei/dsh-pmo-button
 
-# or from the GitHub source
-dsh plugin --profile <your-profile> add github:suifei/dsh-pmo-button
+# Or from the GitHub source (pick the matching profile)
+dsh plugin --profile desktop add github:suifei/dsh-pmo-button
+dsh plugin --profile web add github:suifei/dsh-pmo-button
 ```
 
 It relies on DSH's default base composition (`subagent` / `spawn-in-process` / `session-persistence` / `session-query` / `compaction` are mounted by default); no extra setup is required.
