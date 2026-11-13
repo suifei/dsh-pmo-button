@@ -53,17 +53,23 @@ dsh plugin --profile <你的profile> add github:suifei/dsh-pmo-button
 
 ## 🆚 与 Goal 的差异：同一张嘴，还是另一双眼睛？
 
-DSH 的 **goal** 与 **PMO 按钮**都会让会话“自己往下走”，但一个是**目标续跑**，一个是**独立评审**：
+DSH 的 **goal** 与 **PMO 按钮**都会让会话“自己往下走”，但实现路径不同。读 `dsh-goal` / `dsh-goal-round-driver` / `dsh-tool-goal` 的源码（dsh `0.2.2-rc.1`）可以确认：
+
+- goal 是**同会话、同代理、同模型**的事件溯源目标：`dsh-goal` 把目标状态写进会话日志（`goal/change`）；`dsh-goal-round-driver` 在 agent 空闲、目标 armed、轮数未耗尽时，向**同一会话**追加一条 user 角色的 `<goal_round>` 消息，让同一个代理再跑一轮；`dsh-tool-goal` 提供 `get_goal/create_goal/update_goal` 与完成 / 阻塞的权威检查。
+- PMO 是**另一个会话的独立审查子代理**：有自己的上下文、可配置不同模型 / 思考等级，读主代理的转发块并只读取证，用 `STATUS` 决定循环是否继续。
 
 | 维度 | goal | PMO 按钮 |
 |---|---|---|
-| 思考主体 | 同一会话、同一代理、同一模型 | 独立的持久审查子代理（另一个会话） |
-| 上下文 | 主会话的全部历史 | 审查官自己的上下文 + 本轮转发块（用户原话 / 主代理答复 / 注入，按预算裁剪）+ 自主只读取证 |
-| 目的 | 记住目标并自动续跑，直到完成 / 暂停 / 阻塞 | 判断这一轮是否偏离用户原话、是否越界、是否漏项、是否把猜测当事实，并给出下一步 |
-| 循环驱动 | goal 的自动续跑（`roundsStarted` / `maxGoalRounds`） | 审查官的 `STATUS`：`CONTINUE` 推进、`DONE` 收工、`NEED_HUMAN` 交还 |
-| 状态 | 会话日志内的目标（phase / revision / 轮数 / activation） | `pmo-state.json`（启用集 / 子代理 / 轮数 / 模型指纹）+ 子代理会话 |
-| 控制 | pause / resume / complete / block / clear + 轮数上限 | 按钮启停、`DONE`/`NEED_HUMAN` 自动熄灭、`maxRounds`、会话级模型 / 思考 / 轮数覆盖 |
-| 权威 | 目标由用户 / 代理定义，约束“做什么” | 审查意见以“代表用户授权”注入，约束“这一轮做得对不对”；`NEED_HUMAN` 是刹车 |
+| 思考主体 | 同一会话 / 同一代理 / 同一模型 | 独立的持久审查子代理（另一个会话） |
+| 上下文 | 同一份会话历史；每轮追加一条 `<goal_round>` user 消息 | 审查官自己的上下文 + 本轮转发块（用户原话 / 主代理答复 / 注入，按预算裁剪）+ 自主只读取证 |
+| 目的 | 记住目标并自动续跑，直到完成 / 暂停 / 阻塞 | 判断这一轮是否偏离用户原话、越界、漏项、把猜测当事实，并给出下一步 |
+| 循环驱动 | `dsh-goal-round-driver` 在整代理空闲、armed、轮数未耗尽时排队一轮；只有真正进入模型历史的 goal round 消耗轮数 | 审查官返回 `STATUS`：`CONTINUE` 推进、`DONE` 收工、`NEED_HUMAN` 交还 |
+| 完成 / 停止 | 模型在 goal round 里自判；`complete` 需直接人类输入或当前 goal round 的权威；`blocked` 需同一阻塞条件持续若干轮（默认 3） | 审查官给 `STATUS`；缺 STATUS / 异常结束按 `NEED_HUMAN` 停转 |
+| 轮数 | `maxGoalRounds` 属于 goal（部署默认 256） | `maxRounds` 属于会话（默认 20） |
+| 模型 | 就是主会话的模型 | 可全局 / 会话级换 provider、model、思考等级 |
+| 状态 | 会话日志内的目标（`goal/change`，phase / revision / roundsStarted） | `pmo-state.json`（启用集 / 子代理 / 轮数 / 模型指纹）+ 子代理会话 |
+| 控制 | goal service 的 pause / resume / complete / block / clear + 轮数 | 按钮启停、`DONE`/`NEED_HUMAN` 自动熄灭、`maxRounds`、会话级模型 / 思考 / 轮数覆盖 |
+| 权威 | 目标由用户 / 代理定义；完成 / 暂停 / 编辑需直接人类或 goal round 权威 | 审查意见以“代表用户授权”注入；`NEED_HUMAN` 是刹车 |
 | 适用 | 长任务的目标管理与续跑 | 对每一轮迭代做独立、可异构的评审与导航 |
 
 ### 最大差异：异构评审（你的判断）
@@ -72,17 +78,32 @@ PMO 的审查官是**另一个会话**：可以配置不同的 provider / 模型
 
 这带来的是“去相关”：同模型自审容易共享同一套盲区与合理化路径；换模型 / 换上下文更容易发现“自述与事实不一致”“越界加功能”“把猜测当事实”。
 
+### 源码里最值得注意的一句
+
+`dsh-goal-round-driver` 的 README 把边界写得很清楚：
+
+> **No independent evaluator** — the model-facing goal policy decides when evidence is sufficient for completion… evaluator-backed certification remains deferred.
+>
+> **Same-session execution only** — this package deliberately does not spawn a fresh agent, fork a session prefix, or implement Ralph-style independent attempts; that workflow belongs to its own plugin layer.
+
+这正好是 PMO 补的缺口：**同一个会话里没有独立评估器**。PMO 用另一个会话、另一份上下文、可选的另一个模型来做这件事；它不是 goal 的替代，而是 goal 缺失的“另一双眼睛”。
+
 ### 其他差异
 
 - **目标是“继续做”，审查是“判断做得对不对”**：goal 不评价质量，只负责让同一代理继续；PMO 不定义目标，只判断这一轮是否偏离用户原话。
-- **终止条件不同**：goal 由目标完成 / 暂停 / 阻塞 / 轮数结束；PMO 由 STATUS 决定，`DONE`/`NEED_HUMAN` 立即熄灭，`CONTINUE` 才续轮。
+- **goal round 是同一会话里的一条 user 消息**：它进入主代理的历史；PMO 的转发块是发给另一个会话的独立消息。前者增加主上下文，后者不污染主上下文（但会消耗审查官上下文）。
+- **完成权威不同**：goal 的 `complete` 只认直接人类输入或当前 goal round；PMO 的 `DONE` 只是审查意见，不能代替 goal 的 complete。组合时，PMO 说 `DONE` 后仍需用户（或 goal round）去 complete 目标。
+- **轮数含义不同**：goal round 是“再来一轮工作”；PMO 的轮数是“再审一次”。两者都会占用回合与 token，组合时要一起看预算。
+- **恢复行为不同**：goal 在 resume / fork 后默认 disarmed，需人类 resume；PMO 的 DONE 闸门、按钮启停、会话级覆盖是另一套恢复 / 停止语义。
 - **证据是被裁剪的**：审查官看不到完整会话，只看转发块（按预算优先保留用户原话与主代理答复）；它必须自己读工作区补证据。这既强制了证据化，也带来“转发块缺内容会误判”的风险。
-- **权威是委托的**：审查意见以“代表用户授权”注入，比 goal 的目标约束更强；因此只读约束与 `NEED_HUMAN` 是必要的刹车。
 - **记忆是分开的**：审查官有自己的持久记忆（跨启停、冷恢复、压缩），能核对主代理是否执行了上一轮的“下一步”；goal 的记忆就是主代理自己的上下文。
 
 ### 好处与问题
 
-**好处**：交叉验证 / 去自证偏差；独立上下文；可异构模型与成本选择；强制证据；每轮都有可执行的“下一步”；可随时停 / 换模型 / 换角色。
+**好处**：
+- 补上 goal 的独立评估器缺口：同一会话里模型自判，PMO 换会话、换模型、换证据路径做交叉验证；
+- 去自证偏差；独立上下文；可异构模型与成本选择；
+- 强制证据；每轮都有可执行的“下一步”；可随时停 / 换模型 / 换角色。
 
 **问题与边界**：
 - 成本与延迟翻倍（两套模型、两轮往返）；
@@ -91,13 +112,14 @@ PMO 的审查官是**另一个会话**：可以配置不同的 provider / 模型
 - 审查官上下文会增长 / 漂移，换模型会重置审查记忆；
 - STATUS 依赖模型守约；缺 STATUS 在 0.12.0 按 `NEED_HUMAN` 停转，仍可能误停；
 - “代表用户授权”有越权风险，需要 `NEED_HUMAN` 与人工兜底；
-- 它不替代 goal 的目标管理：没有目标时，PMO 只能审“这一轮”，不能决定“接下来做什么”。
+- **不能替代 goal 的完成权威**：PMO 的 `DONE`/`NEED_HUMAN` 不改变 goal 的 phase，用户仍需 complete / pause / block；
+- **组合时的轮次竞争**：goal round 只在整代理空闲且 descendants settle 后开始；PMO 的 review 回合 / 子代理会占用空闲窗口；两者同时开时要一起控制 `maxRounds` 与 `maxGoalRounds`。
 
 ### 怎么配合
 
-- 用 **goal** 定“做什么、做到什么时候”（目标、轮数、完成 / 阻塞）；
-- 用 **PMO** 审“这一轮是否真的做对、是否偏离用户原话”；
-- PMO 的 `NEED_HUMAN` 可以作为 goal 的暂停点；PMO 的 `DONE` 与 goal 的 complete 可以相互印证，但不要互相替代。
+- 用 **goal** 定“做什么、做到什么时候”（目标、轮数、完成 / 阻塞）；用 **PMO** 审“这一轮是否真的做对、是否偏离用户原话”；
+- PMO 的 `NEED_HUMAN` 可以作为你去 pause / block goal 的信号；PMO 的 `DONE` 不自动 complete goal，仍需按 goal 的完成权威收口；
+- 两者同时开启时，把 `maxRounds`（评审轮数）与 `maxGoalRounds`（工作轮数）都设小一点，避免双重循环把预算打穿。
 
 ## ⚙️ 配置
 
@@ -216,6 +238,8 @@ dsh --profile <你的profile> --dump-config   # 验证插件树
 ## 🗺️ 下一步计划：审查角色提示词模板
 
 目标：让“换一个模型 / 上下文”进一步变成“换一个审查视角”。双线路与 STATUS 协议不变，只替换身份提示词与推荐模型 / 思考等级。
+
+这也承接 goal 的边界：goal 把 evaluator-backed certification 列为 deferred；角色模板让这个独立评估器更专精（架构 / 安全 / 测试…），但它仍是评审，不改变 goal 的完成权威。
 
 计划内置模板（可选，不改变协议）：
 
