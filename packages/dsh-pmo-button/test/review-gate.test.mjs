@@ -129,8 +129,26 @@ function harness(state, opts = {}) {
   const logText = () => fs.readFileSync(logFile, 'utf8')
   const wait = (ms = 30) => new Promise((r) => setTimeout(r, ms))
   const cleanup = () => fs.rmSync(dir, { recursive: true, force: true })
-  return { dir, sent, activated, followups, childTurn, commitVerdict, native, preStep, toggle, forwards, logText, wait, cleanup, turnStart, turnEnd, userMsg, assistantMsg, settlement, imageMsg, route }
+  return { dir, sent, activated, followups, childTurn, commitVerdict, native, preStep, toggle, forwards, logText, wait, cleanup, turnStart, turnEnd, userMsg, assistantMsg, settlement, imageMsg, route, emit }
 }
+
+test('request/header reads effort from data.header.config.reasoningEffort', async (t) => {
+  const h = harness()
+  t.after(() => h.cleanup())
+  await h.toggle(true)
+  await h.wait()
+  h.turnStart(1)
+  h.userMsg('检查一下')
+  h.emit({
+    type: 'request/header',
+    data: { header: { config: { provider: 'test', model: 'm1', reasoningEffort: 'high' } }, reason: 'initial' },
+  })
+  h.assistantMsg('已完成')
+  h.turnEnd(1)
+  await h.wait(120)
+  const log = h.logText()
+  assert.match(log, /\[test\/m1 High\]/, 'the turn log should carry the header effort')
+})
 
 test('f5bb replay: a settlement-notice-only turn is never forwarded', async (t) => {
   const h = harness()

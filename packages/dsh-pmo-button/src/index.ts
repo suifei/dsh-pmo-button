@@ -902,10 +902,9 @@ export function apply(ctx: any, config: any) {
         }
         saveState()
       } else if (t === 'request/header') {
-        // Best-effort sniff of the reasoning effort for the report prefix.
-        const d = event.data || {}
-        const ms = d.modelSelection || d.selection || d
-        const eff = ms.reasoningEffort ?? ms.effort ?? d.reasoningEffort ?? d.effort
+        // The logged envelope keeps the call config under data.header; the
+        // effort is LlmCallConfig.reasoningEffort (data.header.config).
+        const eff = event.data?.header?.config?.reasoningEffort
         if (typeof eff === 'string' && eff) bufferFor(sid).effort = eff
       } else if (t === 'turn/end') {
         flushTurn(sid, event)
