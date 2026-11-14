@@ -326,9 +326,11 @@ export function apply(ctx: any, config: any) {
         const stored = d.global.get()
         if (stored && Number(stored.version) >= 1) {
           hydrateDoc(stored)
+          append(`${stamp()}  [storage] 水合 ${enabled.size} 个会话\n`)
         } else {
           // First domain write: persist the legacy file contents once.
           saveState()
+          append(`${stamp()}  [storage] 迁移旧状态 ${enabled.size} 个会话\n`)
           try { fs.renameSync(statePath, statePath + '.migrated') } catch { /* no legacy file */ }
         }
       }).catch((err: any) => logger.warn?.(`pmo-button: storage open failed: ${err}`))
