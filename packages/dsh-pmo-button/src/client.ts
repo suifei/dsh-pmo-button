@@ -90,8 +90,10 @@ window.__ModuleLoader__.load({
       '日志': 'Logging',
       '审查轮数上限（0 = 不限）': 'Review round cap (0 = unlimited)',
       '日志单块截断阈值': 'Log block truncation limit',
-      '子代理提供方': 'Subagent provider',
+      '保存中…': 'Saving…',
+      'PMO 按钮渲染异常: ': 'PMO button render failed: ',
       '子代理标签': 'Subagent label',
+      '子代理提供方': 'Subagent provider',
       '启动问候文本（签到，非审查请求）': 'Startup greeting (check-in, not a review request)',
       '身份提示词（缺席时使用内置审查规程）': 'Identity prompt (built-in rules when empty)',
       '日志文件路径': 'Log file path',
@@ -263,7 +265,7 @@ window.__ModuleLoader__.load({
       return row;
     }
 
-    function openMenu(anchor, sid, onClose, t) {
+    function openMenu(anchor, sid, onClose, t, tr) {
       closeMenu();
       const stl = el('style');
       stl.textContent = CSS;
@@ -298,7 +300,7 @@ window.__ModuleLoader__.load({
       function renderEfforts(reasoning, current) {
         const keep = current === undefined ? selE.value : String(current || '');
         while (selE.firstChild) selE.removeChild(selE.firstChild);
-        for (const row of effortChoices(reasoning, keep, t)) {
+        for (const row of effortChoices(reasoning, keep, tr)) {
           const op = el('option', null, row.label);
           op.value = row.value;
           selE.appendChild(op);
@@ -311,7 +313,7 @@ window.__ModuleLoader__.load({
       m.appendChild(menuRow(t.rounds, inR, hintR));
       const status = el('div', 'pmo-menu-status');
       m.appendChild(status);
-      m.appendChild(el('div', 'pmo-menu-foot', VER + ' · ' + t('会话级覆盖优先于全局；模型/思考等级变更会重置审查官（记忆清零）')));
+      m.appendChild(el('div', 'pmo-menu-foot', VER + ' · ' + tr('会话级覆盖优先于全局；模型/思考等级变更会重置审查官（记忆清零）')));
       document.body.appendChild(m);
 
       const r = anchor && anchor.getBoundingClientRect
@@ -341,7 +343,7 @@ window.__ModuleLoader__.load({
           effort: selE.value,
           maxRounds: inR.value.trim() === '' ? undefined : Number(inR.value.trim()),
         };
-        status.textContent = t('保存中…');
+        status.textContent = tr('保存中…');
         status.style.color = '';
         api.setSessionConfig(sid, patch)
           .then(function (body) {
@@ -350,7 +352,7 @@ window.__ModuleLoader__.load({
               status.textContent = body.reset
                 ? t.savedReset
                 : body.effortAdjusted
-                  ? t('已保存 ✓（该思考等级不适用于此模型，已改为继承）')
+                  ? tr('已保存 ✓（该思考等级不适用于此模型，已改为继承）')
                   : t.saved;
               status.style.color = '';
             } else {
@@ -359,7 +361,7 @@ window.__ModuleLoader__.load({
             }
           })
           .catch(function () {
-            status.textContent = t.fail + t('（连接）');
+            status.textContent = t.fail + tr('（连接）');
             status.style.color = 'var(--dsw-alias-state-error-primary,#e5484d)';
           });
       }
@@ -372,8 +374,8 @@ window.__ModuleLoader__.load({
           if (!body || !body.ok || !body.config) return;
           const n = body.config.maxRounds;
           if (typeof n === 'number') {
-            inR.placeholder = t('继承全局（') + n + t(' 轮）');
-            hintR.textContent = t('留空 = 继承全局上限（') + n + t(' 轮）');
+            inR.placeholder = tr('继承全局（') + n + tr(' 轮）');
+            hintR.textContent = tr('留空 = 继承全局上限（') + n + tr(' 轮）');
           }
         })
         .catch(function () { });
@@ -495,7 +497,7 @@ window.__ModuleLoader__.load({
             if (menuOpen) { closeMenu(); return; }
             openMenu(wrapRef.current, sid, function () {
               if (aliveRef.current) setMenuOpen(false);
-            }, tr);
+            }, t, tr);
             setMenuOpen(true);
           }
 
@@ -533,7 +535,7 @@ window.__ModuleLoader__.load({
             }),
           );
         } catch (err) {
-          return h('span', { className: 'pmo-strip', title: String(err) }, h('span', { className: 'pmo-bad' }), 'PMO按钮渲染异常:' + err);
+          return h('span', { className: 'pmo-strip', title: String(err) }, h('span', { className: 'pmo-bad' }), tr('PMO 按钮渲染异常: ') + err);
         }
       }
 
@@ -612,7 +614,7 @@ window.__ModuleLoader__.load({
         });
 
         if (props && props.view === 'summary') {
-          return h('span', { className: 'pmo-cfg-note' }, 'PMO 审查循环 · 在插件详情页配置');
+          return h('span', { className: 'pmo-cfg-note' }, tr('PMO 审查循环 · 在插件详情页配置'));
         }
         if (!form || !snapshot || snapshot.status !== 'ready') {
           return h('div', { className: 'pmo-cfg' },
