@@ -476,6 +476,14 @@ window.__ModuleLoader__.load({
         return h('div', { className: 'pmo-strip' }, h('span', { className: 'pmo-ok' }), 'PMO ' + VER + ' 已加载 ' + now);
       }
 
+      function BundleNote(props) {
+        if (props && props.view === 'summary') {
+          return h('span', { className: 'pmo-cfg-note' }, 'PMO 审查循环 · 在组件行配置中编辑');
+        }
+        return h('div', { className: 'pmo-cfg' },
+          h('span', { className: 'pmo-cfg-note' }, '在下方“包含的组件”中点开 PMO 按钮行，即可编辑审查模型与身份提示词。'));
+      }
+
       function ConfigPanel(props) {
         const form = props && props.form;
         const snapshot = form && form.state;
@@ -691,6 +699,12 @@ window.__ModuleLoader__.load({
           c.slots.inject('plugins.bundle.config', function () {
             return c.slots.register(
               { name: 'plugins.bundle.config', key: '@suifei/dsh-pmo-button' },
+              BundleNote,
+            );
+          });
+          c.slots.inject('plugins.row.config', function () {
+            return c.slots.register(
+              { name: 'plugins.row.config', key: 'pmo-button' },
               ConfigPanel,
             );
           });
