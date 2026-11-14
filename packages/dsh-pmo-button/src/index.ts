@@ -28,6 +28,8 @@ import os from 'node:os'
 import path from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
 import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { defineDomain } from '@deepseek-ai/dsh-storage-domain'
+import { z } from 'zod'
 import { PmoService } from './service.js'
 import type { PmoBackend } from './service.js'
 
@@ -114,6 +116,47 @@ export const Config = Schema.object({
 
 const SEP = '\n' + '─'.repeat(68) + '\n'
 
+/** Persisted state document; version 0 is the "never written" initial value. */
+const StateRecord = z.object({
+  version: z.number(),
+  enabled: z.array(z.string()),
+  turnCounts: z.record(z.string(), z.number()),
+  buffers: z.record(z.string(), z.record(z.string(), z.unknown())),
+  children: z.record(z.string(), z.string()),
+  roleSent: z.record(z.string(), z.string()),
+  childReports: z.record(z.string(), z.string()),
+  doneSet: z.record(z.string(), z.boolean()),
+  stopped: z.record(z.string(), z.boolean()),
+  overrides: z.record(z.string(), z.record(z.string(), z.unknown())),
+  modelFps: z.record(z.string(), z.string()),
+  lastForwardReview: z.record(z.string(), z.boolean()),
+  rounds: z.record(z.string(), z.number()),
+})
+
+const STATE_INITIAL = {
+  version: 0,
+  enabled: [],
+  turnCounts: {},
+  buffers: {},
+  children: {},
+  roleSent: {},
+  childReports: {},
+  doneSet: {},
+  stopped: {},
+  overrides: {},
+  modelFps: {},
+  lastForwardReview: {},
+  rounds: {},
+}
+
+/** Typed storage domain for plugin state (global singleton document). */
+const PmoStateDomain: any = defineDomain({
+  name: 'pmo_button',
+  version: 1,
+  global: { schema: StateRecord, initial: STATE_INITIAL },
+  tables: {},
+} as any)
+
 /** @param {import('@deepseek-ai/cordis').Context} ctx @param {Config} config */
 export function apply(ctx: any, config: any) {
   // Volatile Config fields arrive as refs; read through the proxy so every use
@@ -179,9 +222,8 @@ export function apply(ctx: any, config: any) {
   }
 
   // ---- persisted state (armed set, counters, in-flight buffers) -----------
-  try {
-    const raw = fs.readFileSync(statePath, 'utf8')
-    const parsed = JSON.parse(raw)
+  /** Hydrate the in-memory maps from one state document (legacy file or domain). */
+  function hydrateDoc(parsed: any) {
     if (Array.isArray(parsed?.enabled)) enabled = new Set(parsed.enabled.map(String))
     if (parsed?.turnCounts && typeof parsed.turnCounts === 'object') {
       for (const [k, v] of Object.entries(parsed.turnCounts)) turnCounts.set(k, Number(v) || 0)
@@ -233,7 +275,12 @@ export function apply(ctx: any, config: any) {
     if (parsed?.rounds && typeof parsed.rounds === 'object') {
       for (const [sid, n] of Object.entries(parsed.rounds)) rounds.set(sid, Number(n) || 0)
     }
-  } catch { /* first run or unreadable state */ }
+  }
+  // Legacy file bootstrap (also the whole store on hosts without the storage domain).
+  try { hydrateDoc(JSON.parse(fs.readFileSync(statePath, 'utf8'))) } catch { /* first run or unreadable state */ }
+
+  /** Set once the typed storage domain opens; then it owns persistence. */
+  let stateDomain: any = null
 
   function saveState() {
     const kept: Record<string, any> = {}
@@ -253,12 +300,49 @@ export function apply(ctx: any, config: any) {
       lastForwardReview: Object.fromEntries([...lastForwardReview.keys()].map((sid: any) => [sid, true])),
       rounds: Object.fromEntries(rounds),
     }
+    if (stateDomain) {
+      try {
+        void stateDomain.global.set(doc).catch((err: any) => logger.warn?.(`pmo-button: state save failed: ${err}`))
+      } catch (err: any) { logger.warn?.(`pmo-button: state save failed: ${err}`) }
+      return
+    }
     try {
       fs.mkdirSync(path.dirname(statePath), { recursive: true })
       const tmp = statePath + '.tmp'
       fs.writeFileSync(tmp, JSON.stringify(doc, null, 2), 'utf8')
       fs.renameSync(tmp, statePath)
     } catch (err: any) { logger.warn?.(`pmo-button: state save failed: ${err}`) }
+  }
+
+  // ---- typed storage domain (state) ---------------------------------------
+  /** Hand state persistence to the storage domain once it is available. */
+  function startStorage(storage: any) {
+    if (!storage || typeof storage.open !== 'function') return
+    ctx.effect(() => {
+      let closed = false
+      storage.open(PmoStateDomain).then((d: any) => {
+        if (closed) { void d.close(); return }
+        stateDomain = d
+        const stored = d.global.get()
+        if (stored && Number(stored.version) >= 1) {
+          hydrateDoc(stored)
+        } else {
+          // First domain write: persist the legacy file contents once.
+          saveState()
+          try { fs.renameSync(statePath, statePath + '.migrated') } catch { /* no legacy file */ }
+        }
+      }).catch((err: any) => logger.warn?.(`pmo-button: storage open failed: ${err}`))
+      return () => {
+        closed = true
+        if (stateDomain) { void stateDomain.close(); stateDomain = null }
+      }
+    })
+  }
+  if (typeof ctx.inject === 'function') {
+    try { ctx.inject(['storageDomain'], (c: any) => { startStorage(c.storageDomain) }) }
+    catch (err: any) { logger.warn?.(`pmo-button: storage injection failed: ${err}`) }
+  } else if (typeof ctx.get === 'function') {
+    startStorage(ctx.get('storageDomain'))
   }
 
   // ---- log writer ----------------------------------------------------------
