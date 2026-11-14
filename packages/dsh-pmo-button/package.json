@@ -12,16 +12,17 @@
     "url": "git+https://github.com/suifei/dsh-pmo-button.git"
   },
   "type": "module",
+  "main": "./lib/index.js",
   "exports": {
-    ".": "./index.js",
-    "./client": "./client.js",
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg",
     "./logo": "./logo.svg"
   },
   "files": [
-    "index.js",
-    "client.js",
+    "lib/index.js",
+    "lib/client.js",
     "cordis.patch.yml",
     "locale/en.json",
     "locale/zh.json",
@@ -32,7 +33,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --check index.js && node --check client.js && node --test test/review-gate.test.mjs",
+    "build": "tsc -b tsconfig.json",
+    "test": "npm run build && node --check lib/index.js && node --check lib/client.js && node --test test/review-gate.test.mjs",
     "test:live": "node test/live/run.mjs"
   },
   "publishConfig": {

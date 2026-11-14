@@ -9,7 +9,7 @@
 // packages/typert-protocol right before generation.
 //
 // It is a BUILD ARTIFACT, not a second implementation:
-//   - packages/typert-protocol/ is gitignored and never committed;
+//   - build/ is outside pnpm's `packages/*` workspace glob and is gitignored;
 //   - the plugin's runtime always resolves the real
 //     @deepseek-ai/dsh-typert-protocol from node_modules;
 //   - the shim only carries the declarations the generator inspects.
@@ -17,7 +17,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const root = process.cwd()
-const dir = path.join(root, 'packages', 'typert-protocol')
+const dir = path.join(root, 'build', 'typert-protocol')
 const src = path.join(dir, 'src')
 
 const manifest = {

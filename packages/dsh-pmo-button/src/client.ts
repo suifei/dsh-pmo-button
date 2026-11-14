@@ -1,3 +1,5 @@
+// @ts-nocheck
+// Transitional mechanical migration (P0 step 1). Typing lands with the conversation node work.
 /**
  * PMO button — Client half v0.12.0.
  * Visual contributions, all session-aware:
@@ -683,3 +685,4 @@ window.__ModuleLoader__.load({
     }
   },
 });
+

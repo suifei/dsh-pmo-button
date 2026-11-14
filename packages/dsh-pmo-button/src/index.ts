@@ -1,3 +1,5 @@
+// @ts-nocheck
+// Transitional mechanical migration (P0 step 1). Typing lands with the Remote service extraction.
 /**
  * PMO button — Host half v0.12.0 (dual-line relay).
  * Per-session armed set, turn buffers, child registry, and the identity-prompt
@@ -1056,3 +1058,4 @@ export function apply(ctx, config) {
     logger.warn?.('pmo-button: webServer absent — Client 将无法同步开关状态')
   }
 }
+

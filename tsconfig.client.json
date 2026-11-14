@@ -9,9 +9,9 @@
     "declaration": true,
     "baseUrl": ".",
     "paths": {
-      "@deepseek-ai/dsh-typert-protocol": ["./packages/typert-protocol/src/index.d.ts"]
+      "@deepseek-ai/dsh-typert-protocol": ["./build/typert-protocol/src/index.d.ts"]
     }
   },
   "files": [],
-  "references": [{ "path": "./packages/typert-protocol" }]
+  "references": [{ "path": "./build/typert-protocol" }, { "path": "./packages/dsh-pmo-button" }]
 }

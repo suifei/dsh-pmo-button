@@ -1,8 +1,11 @@
 # Workspace root (Phase 1 of the 0.13.0 Remote migration).
 node_modules/
 
-# Build-time Typert declaration shim (generated, never committed)
-packages/typert-protocol/
+# Build-time Typert declaration shim and other build output (never committed)
+build/
+
+# Package build output (compiled from src/)
+packages/dsh-pmo-button/lib/
 
 # Local test output
 packages/dsh-pmo-button/test/out/
@@ -10,3 +13,7 @@ packages/dsh-pmo-button/test/out/
 # Local scratch
 *.log
 .workbench/
+
+# TS incremental build info
+*.tsbuildinfo
+
