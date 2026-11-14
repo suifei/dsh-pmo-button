@@ -565,7 +565,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 'pmo-cfg-label' }, label),
             h('input', {
               className: 'pmo-cfg-input', type: 'number', key: 'nf:' + key + ':' + rev, min: '0', step: '1', defaultValue: value,
-              onChange: function (e) { saveFields({ [key]: e.target.value }); },
+              onBlur: function (e) { saveFields({ [key]: e.target.value }); },
             }));
         }
         function textareaField(key, label, placeholder) {
