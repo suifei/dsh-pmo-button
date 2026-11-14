@@ -4,11 +4,14 @@
   "type": "module",
   "packageManager": "pnpm@11.28.5",
   "scripts": {
+    "prepare:typert": "node scripts/prepare-typert-shim.mjs",
+    "build": "npm run prepare:typert && tsc -b tsconfig.host.json",
     "test": "npm --prefix packages/dsh-pmo-button test",
     "test:live": "npm --prefix packages/dsh-pmo-button run test:live"
   },
   "devDependencies": {
     "@deepseek-ai/dsh-typert-generator": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.2-rc.1",
     "typescript": "^6.0.3"
   }
 }

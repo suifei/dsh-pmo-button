@@ -12,5 +12,6 @@
       "@deepseek-ai/dsh-typert-protocol": ["./packages/typert-protocol/src/index.d.ts"]
     }
   },
+  "files": [],
   "references": [{ "path": "./packages/typert-protocol" }]
 }

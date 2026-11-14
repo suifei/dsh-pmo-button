@@ -1,6 +1,9 @@
 # Workspace root (Phase 1 of the 0.13.0 Remote migration).
 node_modules/
 
+# Build-time Typert declaration shim (generated, never committed)
+packages/typert-protocol/
+
 # Local test output
 packages/dsh-pmo-button/test/out/
 
