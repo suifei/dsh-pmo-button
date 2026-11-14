@@ -6,8 +6,8 @@
   "scripts": {
     "prepare:typert": "node scripts/prepare-typert-shim.mjs",
     "build:typert": "node scripts/build-typert.mjs",
-    "build:client": "esbuild packages/dsh-pmo-button/src/client.ts --bundle --format=iife --platform=browser --outfile=packages/dsh-pmo-button/lib/client.js --external:react",
-    "build": "npm run prepare:typert && npm run build:typert && tsc -b tsconfig.host.json && npm run build:client",
+    "build:client": "node packages/dsh-pmo-button/scripts/bundle-client.mjs",
+    "build": "npm run prepare:typert && npm run build:typert && npm --prefix packages/dsh-pmo-button run build",
     "test": "npm --prefix packages/dsh-pmo-button test",
     "test:live": "npm --prefix packages/dsh-pmo-button run test:live"
   },

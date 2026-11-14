@@ -26,18 +26,19 @@ importers:
 
   packages/dsh-pmo-button:
     dependencies:
-      '@deepseek-ai/cordis':
-        specifier: ~4.1.0
-        version: 4.1.0
-      '@deepseek-ai/dsh-llm':
-        specifier: 0.2.2-rc.1
-        version: 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)
       '@deepseek-ai/schemastery':
         specifier: ~3.19.0
         version: 3.19.0
       zod:
         specifier: ^4.4.3
         version: 4.6.7
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: ~4.1.0
+        version: 4.1.0
+      '@deepseek-ai/dsh-llm':
+        specifier: 0.2.2-rc.1
+        version: 0.2.2-rc.1(@deepseek-ai/cordis@4.1.0)
 
 packages:
 
