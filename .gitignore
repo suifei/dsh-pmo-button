@@ -1,6 +1,9 @@
+# Workspace root (Phase 1 of the 0.13.0 Remote migration).
 node_modules/
+
+# Local test output
+packages/dsh-pmo-button/test/out/
+
+# Local scratch
 *.log
-logs/
-pmo-state.json
-pmo-state.json.tmp
-test/out/
+.workbench/

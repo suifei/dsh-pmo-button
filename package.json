@@ -1,56 +1,14 @@
 {
-  "name": "@suifei/dsh-pmo-button",
-  "version": "0.12.3",
-  "description": "PMO 审查循环按钮 —— 为 AI 会话挂载一位“资深项目总监”。持久审查子代理 + 双线路 + STATUS 协议（CONTINUE/DONE/NEED_HUMAN）自动循环（DeepSeek Harness 插件）",
-  "keywords": [
-    "deepseek-harness", "dsh", "dsh-plugin", "pmo", "code-review",
-    "subagent", "review-loop", "cordis", "审查", "自动循环"
-  ],
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/suifei/dsh-pmo-button.git"
-  },
+  "name": "dsh-pmo-button-workspace",
+  "private": true,
   "type": "module",
-  "exports": {
-    ".": "./index.js",
-    "./client": "./client.js",
-    "./locale/*.json": "./locale/*.json",
-    "./icon": "./icon.svg",
-    "./logo": "./logo.svg"
-  },
-  "files": [
-    "index.js",
-    "client.js",
-    "cordis.patch.yml",
-    "locale/en.json",
-    "locale/zh.json",
-    "icon.svg",
-    "logo.svg",
-    "README.md",
-    "README.en.md",
-    "LICENSE"
-  ],
+  "packageManager": "pnpm@11.28.5",
   "scripts": {
-    "test": "node --check index.js && node --check client.js && node --test test/review-gate.test.mjs",
-    "test:live": "node test/live/run.mjs"
+    "test": "npm --prefix packages/dsh-pmo-button test",
+    "test:live": "npm --prefix packages/dsh-pmo-button run test:live"
   },
-  "publishConfig": {
-    "access": "public"
-  },
-  "dependencies": {
-    "@deepseek-ai/dsh-llm": "0.2.2-rc.1",
-    "@deepseek-ai/schemastery": "~3.19.0"
-  },
-  "peerDependencies": {
-    "@deepseek-ai/cordis": "~4.1.0"
-  },
-  "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
-    "client": {
-      "platform": "web",
-      "immediately": true,
-      "inject": ["@deepseek-ai/dsh-client-ui-conversation"]
-    }
+  "devDependencies": {
+    "@deepseek-ai/dsh-typert-generator": "0.2.2-rc.1",
+    "typescript": "^6.0.3"
   }
 }

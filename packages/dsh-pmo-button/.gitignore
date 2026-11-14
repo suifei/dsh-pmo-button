@@ -1,0 +1,6 @@
+node_modules/
+*.log
+logs/
+pmo-state.json
+pmo-state.json.tmp
+test/out/
