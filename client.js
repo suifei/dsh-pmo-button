@@ -472,10 +472,10 @@ window.__ModuleLoader__.load({
 
       function PmoStrip() {
         if (loadError) {
-          return h('div', { className: 'pmo-strip' }, h('span', { className: 'pmo-bad' }), 'PMO ' + VER + ' client 异常: ' + loadError);
+          return h('div', { className: 'pmo-strip' }, h('span', { className: 'pmo-bad' }), 'PMO ' + VER + ' 异常: ' + loadError);
         }
         const now = new Date().toTimeString().slice(0, 8);
-        return h('div', { className: 'pmo-strip' }, h('span', { className: 'pmo-ok' }), 'PMO ' + VER + ' client 已加载 ' + now);
+        return h('div', { className: 'pmo-strip' }, h('span', { className: 'pmo-ok' }), 'PMO ' + VER + ' 已加载 ' + now);
       }
 
       function ConfigPanel() {
