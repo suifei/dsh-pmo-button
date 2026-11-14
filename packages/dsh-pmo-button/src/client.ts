@@ -505,14 +505,28 @@ window.__ModuleLoader__.load({
           if (!form) return;
           set(function (s) { return Object.assign({}, s, { msg: '保存中…' }); });
           const ops = Object.keys(patch).map(function (key) {
-            return { op: 'set', path: [key], value: patch[key] };
+            const value = patch[key];
+            if (value === '' || value === undefined || value === null) return { op: 'unset', path: [key] };
+            return { op: 'set', path: [key], value: value };
           });
           form.mutate(ops, snapshot && snapshot.revision)
             .then(function (accepted) {
+              window.__PMO_LAST_MUTATE__ = { ops: ops, accepted: accepted, revision: snapshot && snapshot.revision };
               set(function (s) { return Object.assign({}, s, { msg: accepted ? '已保存 ✓（热生效）' : '保存失败：宿主拒绝' }); });
             })
             .catch(function () { set(function (s) { return Object.assign({}, s, { msg: '保存失败（连接）' }); }); });
         }
+
+        React.useEffect(function () {
+          window.__PMO_FORM_STATE__ = {
+            view: props && props.view,
+            propKeys: props ? Object.keys(props) : [],
+            hasForm: Boolean(props && props.form),
+            status: snapshot && snapshot.status,
+            revision: snapshot && snapshot.revision,
+            values: values,
+          };
+        });
 
         if (props && props.view === 'summary') {
           return h('span', { className: 'pmo-cfg-note' }, 'PMO 审查循环 · 在插件详情页配置');
