@@ -9,7 +9,8 @@
  *  - conversation.composer.dock: liveness strip.
  *  - plugins.bundle.config: global config panel on the bundle page with
  *    aligned rows and semantic widgets (model/effort/provider dropdowns,
- *    number inputs, textareas) and per-field auto-save through /config/save.
+ *    number inputs, textareas) and per-field auto-save through the hosting
+ *    plugin form (form.mutate).
  * Session-level overrides live in the Host's pmo-state.json and only affect
  * the current session; global fields persist for every session.
  * Everything talks to the package-private /pmo-button/* same-origin routes.
@@ -475,8 +476,11 @@ window.__ModuleLoader__.load({
         return h('div', { className: 'pmo-strip' }, h('span', { className: 'pmo-ok' }), 'PMO ' + VER + ' 已加载 ' + now);
       }
 
-      function ConfigPanel() {
-        const st = React.useState({ loaded: false, cfg: {}, catalog: [], providers: [], reasoning: null, msg: '' });
+      function ConfigPanel(props) {
+        const form = props && props.form;
+        const snapshot = form && form.state;
+        const values = (snapshot && snapshot.value) || {};
+        const st = React.useState({ catalog: [], providers: [], reasoning: null, msg: '' });
         const view = st[0];
         const set = st[1];
 
@@ -485,10 +489,9 @@ window.__ModuleLoader__.load({
           const merge = function (patch) { set(function (s) { return Object.assign({}, s, patch); }); };
           api.config()
             .then(function (body) {
-              if (!dead && body && body.ok) merge({ loaded: true, cfg: body.config || {}, reasoning: body.reasoning || null, msg: '' });
-              else if (!dead) merge({ loaded: true, msg: '配置读取失败' });
+              if (!dead && body && body.ok) merge({ reasoning: body.reasoning || null });
             })
-            .catch(function () { if (!dead) merge({ loaded: true, msg: '配置读取失败（连接）' }); });
+            .catch(function () { });
           api.models()
             .then(function (body) { if (!dead && body && body.ok) merge({ catalog: body.providers || [] }); })
             .catch(function () { });
@@ -499,23 +502,29 @@ window.__ModuleLoader__.load({
         }, []);
 
         function saveFields(patch) {
-          set(function (s) { return Object.assign({}, s, { cfg: Object.assign({}, s.cfg, patch), msg: '保存中…' }); });
-          api.saveConfig(patch)
-            .then(function (body) {
-              if (body && body.ok) set(function (s) {
-                return Object.assign({}, s, {
-                  cfg: body.config || s.cfg,
-                  reasoning: body.reasoning || null,
-                  msg: body.effortAdjusted ? '已保存 ✓（思考等级不适用于新模型，已改为继承）' : '已保存 ✓（热生效）',
-                });
-              });
-              else set(function (s) { return Object.assign({}, s, { msg: '保存失败：' + ((body && body.error) || '未知') }); });
+          if (!form) return;
+          set(function (s) { return Object.assign({}, s, { msg: '保存中…' }); });
+          const ops = Object.keys(patch).map(function (key) {
+            return { op: 'set', path: [key], value: patch[key] };
+          });
+          form.mutate(ops, snapshot && snapshot.revision)
+            .then(function (accepted) {
+              set(function (s) { return Object.assign({}, s, { msg: accepted ? '已保存 ✓（热生效）' : '保存失败：宿主拒绝' }); });
             })
             .catch(function () { set(function (s) { return Object.assign({}, s, { msg: '保存失败（连接）' }); }); });
         }
 
+        if (props && props.view === 'summary') {
+          return h('span', { className: 'pmo-cfg-note' }, 'PMO 审查循环 · 在插件详情页配置');
+        }
+        if (!form || !snapshot || snapshot.status !== 'ready') {
+          return h('div', { className: 'pmo-cfg' },
+            h('span', { className: 'pmo-cfg-note' },
+              snapshot && snapshot.status === 'unavailable' ? '此部署未提供该插件的配置表单' : '配置加载中…'));
+        }
+
         function textField(key, label, placeholder, wide) {
-          const value = view.cfg && view.cfg[key] !== undefined && view.cfg[key] !== null ? String(view.cfg[key]) : '';
+          const value = values[key] !== undefined && values[key] !== null ? String(values[key]) : '';
           const input = h('input', {
             className: 'pmo-cfg-input', type: 'text', defaultValue: value, placeholder: placeholder || '',
             onBlur: function (e) { saveFields({ [key]: e.target.value }); },
@@ -524,7 +533,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 'pmo-cfg-label' }, label), input);
         }
         function numberField(key, label) {
-          const value = view.cfg && view.cfg[key] !== undefined && view.cfg[key] !== null ? String(view.cfg[key]) : '';
+          const value = values[key] !== undefined && values[key] !== null ? String(values[key]) : '';
           return h('label', { className: 'pmo-cfg-row', key: key },
             h('span', { className: 'pmo-cfg-label' }, label),
             h('input', {
@@ -533,7 +542,7 @@ window.__ModuleLoader__.load({
             }));
         }
         function textareaField(key, label, placeholder) {
-          const value = view.cfg && view.cfg[key] !== undefined && view.cfg[key] !== null ? String(view.cfg[key]) : '';
+          const value = values[key] !== undefined && values[key] !== null ? String(values[key]) : '';
           return h('label', { className: 'pmo-cfg-row pmo-wide', key: key },
             h('span', { className: 'pmo-cfg-label' }, label),
             h('textarea', {
@@ -542,8 +551,8 @@ window.__ModuleLoader__.load({
             }));
         }
         function modelField() {
-          const curProvider = view.cfg && view.cfg.childModelProvider ? String(view.cfg.childModelProvider) : '';
-          const curModel = view.cfg && view.cfg.childModel ? String(view.cfg.childModel) : '';
+          const curProvider = values.childModelProvider ? String(values.childModelProvider) : '';
+          const curModel = values.childModel ? String(values.childModel) : '';
           const combo = curProvider && curModel ? curProvider + '|' + curModel : '';
           const groups = [];
           for (const g of view.catalog || []) {
@@ -572,7 +581,7 @@ window.__ModuleLoader__.load({
             }, ...opts));
         }
         function effortField() {
-          const value = view.cfg && view.cfg.childReasoningEffort ? String(view.cfg.childReasoningEffort) : '';
+          const value = values.childReasoningEffort ? String(values.childReasoningEffort) : '';
           const opts = effortChoices(view.reasoning, value).map(function (row) {
             return h('option', { value: row.value, key: row.value || 'inherit' }, row.label);
           });
@@ -584,7 +593,7 @@ window.__ModuleLoader__.load({
             }, ...opts));
         }
         function providerField() {
-          const value = view.cfg && view.cfg.provider ? String(view.cfg.provider) : 'spawn';
+          const value = values.provider ? String(values.provider) : 'spawn';
           const list = (view.providers && view.providers.length) ? view.providers.slice() : ['spawn', 'fork'];
           if (list.indexOf(value) === -1) list.push(value);
           return h('label', { className: 'pmo-cfg-row', key: 'provider' },
@@ -595,11 +604,6 @@ window.__ModuleLoader__.load({
             }, ...list.map(function (p) { return h('option', { value: p, key: p }, p); })));
         }
 
-        if (!view.loaded) {
-          return h('div', { className: 'pmo-cfg' },
-            h('style', null, CSS),
-            h('span', { className: 'pmo-cfg-note' }, 'PMO 配置加载中…'));
-        }
         return h('div', { className: 'pmo-cfg' },
           h('style', null, CSS),
           h('div', { className: 'pmo-cfg-section' },
@@ -662,7 +666,6 @@ window.__ModuleLoader__.load({
             state: function (sid) { return call(function (pmo) { return pmo.state(sid); }); },
             toggle: function (sid, on) { return call(function (pmo) { return pmo.toggle(sid, on); }); },
             config: function () { return call(function (pmo) { return pmo.config(); }); },
-            saveConfig: function (patch) { return call(function (pmo) { return pmo.saveConfig(patch); }); },
             sessionConfig: function (sid) { return call(function (pmo) { return pmo.sessionConfig(sid); }); },
             setSessionConfig: function (sid, patch) { return call(function (pmo) { return pmo.setSessionConfig(sid, patch); }); },
             models: function () { return call(function (pmo) { return pmo.models(); }); },

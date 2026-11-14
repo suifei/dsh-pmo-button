@@ -1,7 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {
-  PmoConfigPatch,
   PmoConfigView,
   PmoModelsView,
   PmoProvidersView,
@@ -18,7 +17,6 @@ export interface PmoBackend {
   state(sessionId: string): PmoStateView
   toggle(sessionId: string, enabled: boolean): Promise<PmoToggleResult>
   config(): Promise<PmoConfigView>
-  saveConfig(patch: PmoConfigPatch): Promise<PmoConfigView>
   sessionConfig(sessionId: string): Promise<PmoSessionConfigView>
   setSessionConfig(sessionId: string, patch: PmoSessionPatch): Promise<PmoSessionConfigView>
   models(): Promise<PmoModelsView>
@@ -65,16 +63,6 @@ export class PmoService extends TypertRemoteService {
   @Remote('config')
   config(): Promise<PmoConfigView> {
     return this.backend.config()
-  }
-
-  /**
-   * Persist a global configuration patch through the config editor.
-   * @param patch - fields to merge into the current config.
-   * @returns the validated config and reasoning catalog.
-   */
-  @Remote('saveConfig')
-  saveConfig(patch: PmoConfigPatch): Promise<PmoConfigView> {
-    return this.backend.saveConfig(patch)
   }
 
   /**

@@ -842,41 +842,6 @@ export function apply(ctx: any, config: any) {
         reasoning: await reasoningFor(config.childModelProvider, config.childModel),
       })
     }
-    if (request.method === 'GET' && rest === '/config/save') {
-      // Persisted through the configEditor user layer (survives upgrades) and
-      // validated by the same Schemastery schema the Loader applies. GET with
-      // query params: the desktop shell was observed to drop same-origin POSTs.
-      const editor = ctx.get('configEditor')
-      const entry = ctx.fiber && ctx.fiber.entry !== undefined ? ctx.fiber.entry : undefined
-      if (!editor || entry === undefined) return json({ ok: false, error: '当前部署不支持持久配置保存' }, 400)
-      const q = url.searchParams
-      const patch: any = {}
-      if (q.has('maxRounds')) patch.maxRounds = Math.max(0, Math.floor(Number(q.get('maxRounds')) || 0))
-      if (q.has('maxChars')) patch.maxChars = Math.max(200, Math.floor(Number(q.get('maxChars')) || 4000))
-      for (const k of ['logFile', 'provider', 'childLabel', 'greet', 'rolePrompt', 'childModelProvider', 'childModel', 'childReasoningEffort']) {
-        if (q.has(k)) patch[k] = String(q.get(k))
-      }
-      let validated: any
-      try { validated = Config({ ...config, ...patch }) } catch (err: any) {
-        return json({ ok: false, error: String((err && err.message) || err) }, 400)
-      }
-      // An effort that the selected model does not advertise would be rejected
-      // by resolveCallConfig before provider I/O; clear it instead of persisting
-      // a combination the next review cannot run.
-      let reasoning = await reasoningFor(validated.childModelProvider, validated.childModel)
-      let effortAdjusted = false
-      if (validated.childReasoningEffort) {
-        if (!validated.childModelProvider || !validated.childModel) {
-          validated = { ...validated, childReasoningEffort: '' }
-          effortAdjusted = true
-        } else if (reasoning && reasoning.efforts.length && !reasoning.efforts.some((e: any) => e.id === validated.childReasoningEffort)) {
-          validated = { ...validated, childReasoningEffort: '' }
-          effortAdjusted = true
-        }
-      }
-      await editor.edit(entry, () => ({ ...validated }))
-      return json({ ok: true, config: validated, reasoning, effortAdjusted })
-    }
     if (request.method === 'GET' && rest === '/models') {
       // The same catalog the composer's model selector consumes: providers ×
       // advertised models (id + display name). `llm.listProviders()` returns
@@ -1076,13 +1041,6 @@ export function apply(ctx: any, config: any) {
     }),
     toggle: (sid: any, on: any) => callRoute(`/pmo-button/toggle?session=${encodeURIComponent(sid)}&enabled=${on ? '1' : '0'}`),
     config: () => callRoute('/pmo-button/config'),
-    saveConfig: (patch: any) => {
-      const q = new URLSearchParams()
-      for (const [key, value] of Object.entries(patch)) {
-        if (value !== undefined) q.set(key, String(value))
-      }
-      return callRoute(`/pmo-button/config/save?${q.toString()}`)
-    },
     sessionConfig: (sid: any) => callRoute(`/pmo-button/session-config?session=${encodeURIComponent(sid)}`),
     setSessionConfig: (sid: any, patch: any) => {
       const q = new URLSearchParams({ session: sid })
