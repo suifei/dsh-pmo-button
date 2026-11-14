@@ -1,5 +1,3 @@
-// @ts-nocheck
-// Transitional mechanical migration (P0 step 1). Typing lands with the conversation node work.
 /**
  * PMO button — Client half v0.12.0.
  * Visual contributions, all session-aware:
@@ -16,20 +14,125 @@
  * Everything talks to the package-private /pmo-button/* same-origin routes.
  */
 import contribution from '../lib/typert.remote-client.js'
+import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client'
+import type {
+  ConversationNodeContext,
+  ConversationNodeDefinition,
+} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type {} from '@deepseek-ai/dsh-session/types'
+
+/** Chat payload of one delivered PMO verdict node. */
+export interface PmoReviewNodeData {
+  readonly title: string
+  readonly status: string
+  readonly summary: string
+}
+
+declare module '@deepseek-ai/dsh-client-ui-chat/client' {
+  interface ChatNodeDataMap {
+    'pmo-review': PmoReviewNodeData
+  }
+}
+
+declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
+  interface ConversationStepDataMap {
+    'pmo-review': PmoReviewNodeData
+  }
+}
+
+declare global {
+  interface Window {
+    __ModuleLoader__: any
+    __PMO_LAST_MUTATE__?: any
+    __PMO_FORM_STATE__?: any
+    __PMO_REMOTE_MOUNTED__?: any
+    __PMO_REMOTE_DISPOSE__?: any
+    __PMO_REMOTE_MOUNT_ERROR__?: any
+    __PMO_SET_LOCALE__?: any
+  }
+}
 
 window.__ModuleLoader__.load({
   id: '@suifei/dsh-pmo-button',
-  factory(require) {
+  factory(require: any) {
     const React = require('react');
     const h = React.createElement;
+    /** Source kind the Host stamps on delivered verdict messages. */
+    const REVIEW_SOURCE = 'pmo-review';
+    /** Whole-line STATUS in the verdict report. */
+    const STATUS_IN_TEXT = /STATUS\s*[:：=]\s*(CONTINUE|DONE|NEED_HUMAN)/;
+
+    /** Extract the verdict text from one user/message event (flat or message-wrapped). */
+    function reviewReportOf(event: any): string {
+      const d = event?.data ?? {};
+      const msg = d.message ?? d;
+      const content = Array.isArray(msg?.content) ? msg.content : [];
+      return content
+        .filter((c: any) => c && c.type === 'text')
+        .map((c: any) => String(c.text ?? ''))
+        .join('\n');
+    }
+
+    /** One line per delivered verdict; the message is claimed exclusively so the
+     *  generic user bubble does not render the same review twice. */
+    function pmoReviewDefinition(): ConversationNodeDefinition<any> {
+      return {
+        kind: 'pmo-review',
+        target: 'chat',
+        match(event: any) {
+          if (event?.type !== 'user/message') return null;
+          const d = event.data ?? {};
+          const source = (d.message && d.message.source) || d.source;
+          if (!source || source.kind !== REVIEW_SOURCE) return null;
+          return { id: 'pmo-review:' + event.seq, role: 'start', exclusive: true };
+        },
+        start(_context: ConversationNodeContext, match: any) {
+          const text = reviewReportOf(match.event);
+          const found = STATUS_IN_TEXT.exec(text);
+          const status = found ? found[1] : 'UNKNOWN';
+          const summary = text.split('\n').map((s: string) => s.trim()).find((s: string) => s.length > 0) || '';
+          return { title: 'PMO 审查 · STATUS=' + status, status: status, summary: summary };
+        },
+        update(context: any) { return context.state; },
+        buildViewNode(context: any) {
+          if (!context || context.state === undefined) return null;
+          const anchor = context.start && context.start.event && typeof context.start.event.seq === 'number'
+            ? context.start.event.seq
+            : 0;
+          return {
+            key: context.key,
+            kind: 'pmo-review',
+            id: context.id,
+            target: 'chat',
+            anchorSeq: anchor,
+            location: (context.start && context.start.location) || { kind: 'unresolved' },
+            visibility: 'visible',
+            data: {
+              title: context.state.title,
+              status: context.state.status,
+              summary: context.state.summary,
+            },
+          };
+        },
+      };
+    }
+
+    /** Compact node body: title + status line, no expand control. */
+    function PmoReviewNodeView(props: ChatNodeViewProps<'pmo-review'>) {
+      const data = props.node.data;
+      return h('div', { className: 'pmo-review-node' },
+        h('div', { className: 'pmo-review-title' }, data.title),
+        h('div', { className: 'pmo-review-summary' }, data.summary));
+    }
+
     const BASE = '/pmo-button';
     const VER = 'v0.12.3';
     /** Effort choices from the model's DSH reasoning catalog. No hardcoded
      *  minimal/low/... fallback: without a concrete model the only honest
      *  choice is inherit. Both the session menu and the config panel use this
      *  single builder (qwen: off/low/medium/high; deepseek-flash: off/low/high/max). */
-    function effortChoices(reasoning, current, tr) {
-      const translate = typeof tr === 'function' ? tr : function (source) { return source; };
+    function effortChoices(reasoning: any, current: any, tr: any) {
+      const translate = typeof tr === 'function' ? tr : function (source: any) { return source; };
       const out = [{ value: '', label: translate('继承主会话思考等级') }];
       const rows = reasoning && Array.isArray(reasoning.efforts) ? reasoning.efforts : [];
       for (const e of rows) {
@@ -47,7 +150,7 @@ window.__ModuleLoader__.load({
       }
       return out;
     }
-    let loadError = null;
+    let loadError: any = null;
     /** English copy keyed by the Chinese source text; a missing key falls back to the source. */
     const EN_LOCALE = {
       'PMO：启动自动化': 'Start PMO automation',
@@ -109,11 +212,11 @@ window.__ModuleLoader__.load({
     /** Chinese dictionary: the source text is already Chinese. */
     const ZH_LOCALE = Object.fromEntries(Object.keys(EN_LOCALE).map(function (key) { return [key, key]; }));
     /** Slot-injected translator with an identity fallback. */
-    function translator(props) {
-      return props && typeof props.t === 'function' ? props.t : function (source) { return source; };
+    function translator(props: any) {
+      return props && typeof props.t === 'function' ? props.t : function (source: any) { return source; };
     }
     /** Control/menu copy built from the active translator. */
-    function controlText(tr) {
+    function controlText(tr: any) {
       return {
         start: tr('PMO：启动自动化'),
         stop: tr('PMO：运行中，点击停止'),
@@ -135,15 +238,15 @@ window.__ModuleLoader__.load({
       };
     }
 
-    let menuEl = null;
-    let menuCleanup = null;
-    let menuOnClose = null;
+    let menuEl: any = null;
+    let menuCleanup: any = null;
+    let menuOnClose: any = null;
     /** Remote API facade set by apply(); components call this instead of fetch. */
     /** Package name: the bundle slot key and the row-config key prefix. */
     const BUNDLE_NAME = '@suifei/dsh-pmo-button';
     /** Patch row id declared in cordis.patch.yml. */
     const ROW_ID = 'pmo-button';
-    let api = null;
+    let api: any = null;
 
     const CSS = [
       '.pmo-ctl{position:relative;display:inline-block;flex:0 0 auto;width:56px;height:32px;border-radius:9999px}',
@@ -194,8 +297,11 @@ window.__ModuleLoader__.load({
       '.pmo-menu-select{cursor:pointer}',
       '.pmo-menu-hint{grid-column:2;font-size:11px;color:var(--dsw-alias-label-secondary,#888);line-height:1.45;margin-top:-4px}',
       '.pmo-menu-status{min-height:16px;font-size:11.5px;color:var(--dsw-alias-state-success-primary,#2ea043)}',
-      '.pmo-menu-foot{font-size:11px;color:var(--dsw-alias-label-secondary,#999);line-height:1.5;',
-      'border-top:1px solid var(--dsw-alias-border-l1,#eee);padding-top:8px}',
+      '.pmo-review-node{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-left:3px solid var(--dsw-alias-brand-primary,#4a7dd8);',
+      'background:var(--dsw-alias-bg-layer-1,#fff);border-radius:6px;font:inherit;font-size:12.5px}',
+      '.pmo-review-title{font-weight:600;color:var(--dsw-alias-label-primary,#222)}',
+      '.pmo-review-summary{color:var(--dsw-alias-label-secondary,#666);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.pmo-menu-foot{font-size:11px;color:var(--dsw-alias-label-secondary,#999);line-height:1.5;',      'border-top:1px solid var(--dsw-alias-border-l1,#eee);padding-top:8px}',
     ].join('');
 
     /** DeepSeek whale glyph from the supplied pill artwork (one source of truth). */
@@ -204,7 +310,7 @@ window.__ModuleLoader__.load({
     /** 56×32 pill in four states: idle/active × menu closed/open. The surface
      *  stays light; only the whale and the arrow turn red while armed. All
      *  motion is inline SVG (nested animateTransform swim + glow + arrow pulse). */
-    function pillSvg(running, open) {
+    function pillSvg(running: any, open: any) {
       const color = running ? '#EF4444' : '#9CA3AF';
       const stroke = running ? '#FECACA' : '#E5E7EB';
       const bg = running ? '#FFFFFF' : '#F9FAFB';
@@ -231,7 +337,7 @@ window.__ModuleLoader__.load({
         + '</svg>';
     }
 
-    function sessionIdOf(props) {
+    function sessionIdOf(props: any) {
       const cands = [
         props ? props.sessionId : void 0,
         props && props.session ? props.session.id : void 0,
@@ -242,7 +348,7 @@ window.__ModuleLoader__.load({
       return 'no-session';
     }
 
-    function el(tag, cls, text) {
+    function el(tag: any, cls?: any, text?: any) {
       const n = document.createElement(tag);
       if (cls) n.className = cls;
       if (text !== void 0 && text !== null) n.textContent = text;
@@ -252,12 +358,12 @@ window.__ModuleLoader__.load({
     function closeMenu() {
       if (menuCleanup) { try { menuCleanup(); } catch (e) { /* ignore */ } menuCleanup = null; }
       if (menuEl) { if (menuEl.parentNode) menuEl.parentNode.removeChild(menuEl); menuEl = null; }
-      const cb = menuOnClose;
+      const cb: any = menuOnClose;
       menuOnClose = null;
       if (cb) { try { cb(); } catch (e) { /* ignore */ } }
     }
 
-    function menuRow(label, control, hint) {
+    function menuRow(label: any, control: any, hint?: any) {
       const row = el('div', 'pmo-menu-row');
       row.appendChild(el('span', 'pmo-menu-label', label));
       row.appendChild(control);
@@ -265,7 +371,7 @@ window.__ModuleLoader__.load({
       return row;
     }
 
-    function openMenu(anchor, sid, onClose, t, tr) {
+    function openMenu(anchor: any, sid: any, onClose: any, t: any, tr: any) {
       closeMenu();
       const stl = el('style');
       stl.textContent = CSS;
@@ -297,7 +403,7 @@ window.__ModuleLoader__.load({
       const hintR = el('div', 'pmo-menu-hint', t.roundsHint);
 
       /** Rebuild the effort select from the model's DSH reasoning catalog. */
-      function renderEfforts(reasoning, current) {
+      function renderEfforts(reasoning: any, current: any) {
         const keep = current === undefined ? selE.value : String(current || '');
         while (selE.firstChild) selE.removeChild(selE.firstChild);
         for (const row of effortChoices(reasoning, keep, tr)) {
@@ -346,7 +452,7 @@ window.__ModuleLoader__.load({
         status.textContent = tr('保存中…');
         status.style.color = '';
         api.setSessionConfig(sid, patch)
-          .then(function (body) {
+          .then(function (body: any) {
             if (body && body.ok) {
               renderEfforts(body.reasoning, body.effective && body.effective.effort);
               status.textContent = body.reset
@@ -370,7 +476,7 @@ window.__ModuleLoader__.load({
       inR.addEventListener('change', persist);
 
       api.config()
-        .then(function (body) {
+        .then(function (body: any) {
           if (!body || !body.ok || !body.config) return;
           const n = body.config.maxRounds;
           if (typeof n === 'number') {
@@ -381,7 +487,7 @@ window.__ModuleLoader__.load({
         .catch(function () { });
 
       api.sessionConfig(sid)
-        .then(function (body) {
+        .then(function (body: any) {
           if (!body || !body.ok) return;
           const ov = body.override || {};
           if (ov.provider && ov.model) {
@@ -394,7 +500,7 @@ window.__ModuleLoader__.load({
         .catch(function () { });
 
       api.models()
-        .then(function (body) {
+        .then(function (body: any) {
           if (!body || !body.ok || !Array.isArray(body.providers)) return;
           for (const g of body.providers) {
             const og = el('optgroup');
@@ -420,10 +526,10 @@ window.__ModuleLoader__.load({
         })
         .catch(function () { });
 
-      const onDoc = function (e) {
+      const onDoc = function (e: any) {
         if (!m.contains(e.target) && e.target !== anchor && !(anchor && anchor.contains(e.target))) closeMenu();
       };
-      const onKey = function (e) { if (e.key === 'Escape') closeMenu(); };
+      const onKey = function (e: any) { if (e.key === 'Escape') closeMenu(); };
       document.addEventListener('mousedown', onDoc, true);
       document.addEventListener('keydown', onKey, true);
       menuEl = m;
@@ -436,7 +542,7 @@ window.__ModuleLoader__.load({
     }
 
     function buildPlugin() {
-      function PmoControl(props) {
+      function PmoControl(props: any) {
         const t = controlText(translator(props));
         const tr = translator(props);
         try {
@@ -454,9 +560,9 @@ window.__ModuleLoader__.load({
             let dead = false;
             const tick = function () {
               api.state(sid)
-                .then(function (body) {
+                .then(function (body: any) {
                   if (!dead && body && body.ok) {
-                    setView(function (v) {
+                    setView(function (v: any) {
                       return v.pending ? v : { running: !!body.enabled, turns: body.turns || 0, online: true, pending: false, err: null };
                     });
                   }
@@ -483,16 +589,16 @@ window.__ModuleLoader__.load({
 
           function onClick() {
             const next = !view.running;
-            setView(function (v) { return Object.assign({}, v, { pending: true }); });
+            setView(function (v: any) { return Object.assign({}, v, { pending: true }); });
             api.toggle(sid, next)
-              .then(function (body) {
+              .then(function (body: any) {
                 if (body && body.ok) setView({ running: !!body.enabled, turns: next ? 0 : view.turns, online: true, pending: false, err: null });
-                else setView(function (v) { return Object.assign({}, v, { pending: false, online: false, err: 'bad response' }); });
+                else setView(function (v: any) { return Object.assign({}, v, { pending: false, online: false, err: 'bad response' }); });
               })
-              .catch(function (e) { setView(function (v) { return Object.assign({}, v, { pending: false, online: false, err: String(e && e.message || e) }); }); });
+              .catch(function (e: any) { setView(function (v: any) { return Object.assign({}, v, { pending: false, online: false, err: String(e && e.message || e) }); }); });
           }
 
-          function toggleMenu(ev) {
+          function toggleMenu(ev: any) {
             ev.stopPropagation();
             if (menuOpen) { closeMenu(); return; }
             openMenu(wrapRef.current, sid, function () {
@@ -539,7 +645,7 @@ window.__ModuleLoader__.load({
         }
       }
 
-      function PmoStrip(props) {
+      function PmoStrip(props: any) {
         const tr = translator(props);
         if (loadError) {
           return h('div', { className: 'pmo-strip' }, h('span', { className: 'pmo-bad' }), 'PMO ' + VER + ' ' + tr('PMO 客户端加载失败') + ': ' + loadError);
@@ -548,7 +654,7 @@ window.__ModuleLoader__.load({
         return h('div', { className: 'pmo-strip' }, h('span', { className: 'pmo-ok' }), 'PMO ' + VER + ' ' + tr('PMO 客户端已加载') + ' ' + now);
       }
 
-      function BundleNote(props) {
+      function BundleNote(props: any) {
         const tr = translator(props);
         if (props && props.view === 'summary') {
           return h('span', { className: 'pmo-cfg-note' }, tr('PMO 审查循环 · 在插件详情页配置'));
@@ -557,7 +663,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'pmo-cfg-note' }, tr('在下方“包含的组件”中点开 PMO 按钮行，即可编辑审查模型与身份提示词。')));
       }
 
-      function ConfigPanel(props) {
+      function ConfigPanel(props: any) {
         const tr = translator(props);
         const form = props && props.form;
         const snapshot = form && form.state;
@@ -569,24 +675,24 @@ window.__ModuleLoader__.load({
 
         React.useEffect(function () {
           let dead = false;
-          const merge = function (patch) { set(function (s) { return Object.assign({}, s, patch); }); };
+          const merge = function (patch: any) { set(function (s: any) { return Object.assign({}, s, patch); }); };
           api.config()
-            .then(function (body) {
+            .then(function (body: any) {
               if (!dead && body && body.ok) merge({ reasoning: body.reasoning || null });
             })
             .catch(function () { });
           api.models()
-            .then(function (body) { if (!dead && body && body.ok) merge({ catalog: body.providers || [] }); })
+            .then(function (body: any) { if (!dead && body && body.ok) merge({ catalog: body.providers || [] }); })
             .catch(function () { });
           api.providers()
-            .then(function (body) { if (!dead && body && body.ok) merge({ providers: body.providers || [] }); })
+            .then(function (body: any) { if (!dead && body && body.ok) merge({ providers: body.providers || [] }); })
             .catch(function () { });
           return function () { dead = true; };
         }, []);
 
-        function saveFields(patch) {
+        function saveFields(patch: any) {
           if (!form) return;
-          set(function (s) { return Object.assign({}, s, { msg: tr('保存中…') }); });
+          set(function (s: any) { return Object.assign({}, s, { msg: tr('保存中…') }); });
           const ops = Object.keys(patch).map(function (key) {
             const value = patch[key];
             if (value === '' || value === undefined || value === null) return { op: 'unset', path: [key] };
@@ -595,11 +701,11 @@ window.__ModuleLoader__.load({
           // No explicit revision fence: the form queues writes with the latest
           // known revision, so rapid edits (12 then 6) cannot conflict.
           form.mutate(ops)
-            .then(function (accepted) {
+            .then(function (accepted: any) {
               window.__PMO_LAST_MUTATE__ = { ops: ops, accepted: accepted, revision: snapshot && snapshot.revision };
-              set(function (s) { return Object.assign({}, s, { msg: accepted ? tr('已保存 ✓（热生效）') : tr('保存失败：宿主拒绝') }); });
+              set(function (s: any) { return Object.assign({}, s, { msg: accepted ? tr('已保存 ✓（热生效）') : tr('保存失败：宿主拒绝') }); });
             })
-            .catch(function () { set(function (s) { return Object.assign({}, s, { msg: tr('保存失败（连接）') }); }); });
+            .catch(function () { set(function (s: any) { return Object.assign({}, s, { msg: tr('保存失败（连接）') }); }); });
         }
 
         React.useEffect(function () {
@@ -622,34 +728,34 @@ window.__ModuleLoader__.load({
               snapshot && snapshot.status === 'unavailable' ? tr('此部署未提供该插件的配置表单') : tr('配置加载中…')));
         }
 
-        function textField(key, label, placeholder, wide) {
+        function textField(key: any, label: any, placeholder?: any, wide?: any) {
           const value = values[key] !== undefined && values[key] !== null ? String(values[key]) : '';
           const input = h('input', {
             className: 'pmo-cfg-input', type: 'text', key: 'tf:' + key + ':' + rev, defaultValue: value, placeholder: placeholder || '',
-            onBlur: function (e) { saveFields({ [key]: e.target.value }); },
+            onBlur: function (e: any) { saveFields({ [key]: e.target.value }); },
           });
           return h('label', { className: 'pmo-cfg-row' + (wide ? ' pmo-wide' : ''), key: key },
             h('span', { className: 'pmo-cfg-label' }, label), input);
         }
-        function numberField(key, label) {
+        function numberField(key: any, label: any) {
           const value = values[key] !== undefined && values[key] !== null ? String(values[key]) : '';
           return h('label', { className: 'pmo-cfg-row', key: key },
             h('span', { className: 'pmo-cfg-label' }, label),
             h('input', {
               className: 'pmo-cfg-input', type: 'number', key: 'nf:' + key + ':' + rev, min: '0', step: '1', defaultValue: value,
-              onBlur: function (e) {
+              onBlur: function (e: any) {
                 const raw = e.target.value;
                 saveFields({ [key]: raw === '' ? '' : Number(raw) });
               },
             }));
         }
-        function textareaField(key, label, placeholder) {
+        function textareaField(key: any, label: any, placeholder?: any) {
           const value = values[key] !== undefined && values[key] !== null ? String(values[key]) : '';
           return h('label', { className: 'pmo-cfg-row pmo-wide', key: key },
             h('span', { className: 'pmo-cfg-label' }, label),
             h('textarea', {
               className: 'pmo-cfg-input', key: 'ta:' + key + ':' + rev, defaultValue: value, placeholder: placeholder || '',
-              onBlur: function (e) { saveFields({ [key]: e.target.value }); },
+              onBlur: function (e: any) { saveFields({ [key]: e.target.value }); },
             }));
         }
         function modelField() {
@@ -658,14 +764,14 @@ window.__ModuleLoader__.load({
           const combo = curProvider && curModel ? curProvider + '|' + curModel : '';
           const groups = [];
           for (const g of view.catalog || []) {
-            const kids = (g.models || []).map(function (m) {
+            const kids = (g.models || []).map(function (m: any) {
               return h('option', { value: g.provider + '|' + m.id, key: g.provider + '|' + m.id },
                 (m.name && m.name !== m.id) ? m.name + '（' + g.provider + '/' + m.id + '）' : g.provider + '/' + m.id);
             });
             groups.push(h('optgroup', { label: g.name || g.provider, key: g.provider }, ...kids));
           }
-          const hasCombo = combo && !(view.catalog || []).some(function (g) {
-            return (g.models || []).some(function (m) { return g.provider + '|' + m.id === combo; });
+          const hasCombo = combo && !(view.catalog || []).some(function (g: any) {
+            return (g.models || []).some(function (m: any) { return g.provider + '|' + m.id === combo; });
           });
           const opts = [h('option', { value: '', key: 'inherit' }, tr('继承主会话模型'))];
           if (hasCombo) opts.push(h('option', { value: combo, key: 'current' }, combo));
@@ -674,7 +780,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 'pmo-cfg-label' }, tr('审查模型')),
             h('select', {
               className: 'pmo-cfg-input', value: combo,
-              onChange: function (e) {
+              onChange: function (e: any) {
                 const v = e.target.value;
                 const i = v.indexOf('|');
                 if (i === -1) saveFields({ childModelProvider: '', childModel: '' });
@@ -691,7 +797,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 'pmo-cfg-label' }, tr('思考等级')),
             h('select', {
               className: 'pmo-cfg-input', value: value,
-              onChange: function (e) { saveFields({ childReasoningEffort: e.target.value }); },
+              onChange: function (e: any) { saveFields({ childReasoningEffort: e.target.value }); },
             }, ...opts));
         }
         function providerField() {
@@ -702,8 +808,8 @@ window.__ModuleLoader__.load({
             h('span', { className: 'pmo-cfg-label' }, tr('子代理提供方')),
             h('select', {
               className: 'pmo-cfg-input', value: value,
-              onChange: function (e) { saveFields({ provider: e.target.value }); },
-            }, ...list.map(function (p) { return h('option', { value: p, key: p }, p); })));
+              onChange: function (e: any) { saveFields({ provider: e.target.value }); },
+            }, ...list.map(function (p: any) { return h('option', { value: p, key: p }, p); })));
         }
 
         return h('div', { className: 'pmo-cfg' },
@@ -736,25 +842,25 @@ window.__ModuleLoader__.load({
 
       return {
         inject: ['remote'],
-        apply(c) {
+        apply(c: any) {
           // Mount the generated Typert contribution first. The namespace
           // (`remote.pmo`) only exists after the mount, so the UI half runs in a
           // child plugin that injects it; Cordis starts the child once ready.
-          c.remote.$mount(contribution).then(function (dispose) {
+          c.remote.$mount(contribution).then(function (dispose: any) {
             window.__PMO_REMOTE_MOUNTED__ = true;
             window.__PMO_REMOTE_DISPOSE__ = dispose;
             c.plugin({
-              inject: ['slots', 'remote.pmo', 'locale'],
+              inject: ['slots', 'remote.pmo', 'locale', 'uiConversation'],
               apply: applyChild,
             });
-          }).catch(function (err) {
+          }).catch(function (err: any) {
             window.__PMO_REMOTE_MOUNT_ERROR__ = String(err && err.message || err);
           });
         },
       };
 
-      function applyChild(c) {
-          function call(fn) {
+      function applyChild(c: any) {
+          function call(fn: any) {
             return Promise.resolve()
               .then(function () { return fn(c.remote.pmo); })
               .then(function (result) {
@@ -765,13 +871,13 @@ window.__ModuleLoader__.load({
               .catch(function (err) { return { ok: false, error: String(err && err.message || err) }; });
           }
           api = {
-            state: function (sid) { return call(function (pmo) { return pmo.state(sid); }); },
-            toggle: function (sid, on) { return call(function (pmo) { return pmo.toggle(sid, on); }); },
-            config: function () { return call(function (pmo) { return pmo.config(); }); },
-            sessionConfig: function (sid) { return call(function (pmo) { return pmo.sessionConfig(sid); }); },
-            setSessionConfig: function (sid, patch) { return call(function (pmo) { return pmo.setSessionConfig(sid, patch); }); },
-            models: function () { return call(function (pmo) { return pmo.models(); }); },
-            providers: function () { return call(function (pmo) { return pmo.providers(); }); },
+            state: function (sid: any) { return call(function (pmo: any) { return pmo.state(sid); }); },
+            toggle: function (sid: any, on: any) { return call(function (pmo: any) { return pmo.toggle(sid, on); }); },
+            config: function () { return call(function (pmo: any) { return pmo.config(); }); },
+            sessionConfig: function (sid: any) { return call(function (pmo: any) { return pmo.sessionConfig(sid); }); },
+            setSessionConfig: function (sid: any, patch: any) { return call(function (pmo: any) { return pmo.setSessionConfig(sid, patch); }); },
+            models: function () { return call(function (pmo: any) { return pmo.models(); }); },
+            providers: function () { return call(function (pmo: any) { return pmo.providers(); }); },
           };
           // Locale namespace: English copy keyed by the Chinese source; zh falls
           // back to the source text, so the dictionary stays single-sourced.
@@ -781,10 +887,12 @@ window.__ModuleLoader__.load({
               return localeSvc.register('pmoButton', { zh: ZH_LOCALE, en: EN_LOCALE });
             });
             // Test hook: lets the E2E switch the UI locale and assert re-render.
-            window.__PMO_SET_LOCALE__ = function (id) { localeSvc.setLocale(id); };
+            window.__PMO_SET_LOCALE__ = function (id: any) { localeSvc.setLocale(id); };
           }
-          c.slots.inject('plugins.bundle.config', function () {
-            return c.slots.register(
+          if (c.uiConversation && c.uiConversation.events && typeof c.uiConversation.events.register === 'function') {
+            c.uiConversation.events.register(pmoReviewDefinition());
+          }
+          c.slots.inject('plugins.bundle.config', function () {            return c.slots.register(
               { name: 'plugins.bundle.config', key: BUNDLE_NAME, locale: 'pmoButton' },
               BundleNote,
             );
@@ -807,6 +915,12 @@ window.__ModuleLoader__.load({
               PmoControl,
             );
           });
+          c.slots.inject('conversation.chat.node', function () {
+            return c.slots.register(
+              { name: 'conversation.chat.node', key: 'pmo-review', locale: 'pmoButton' },
+              PmoReviewNodeView,
+            );
+          });
       }
     }
 
@@ -816,7 +930,7 @@ window.__ModuleLoader__.load({
       loadError = String(err);
       return {
         inject: ['slots'],
-        apply(c) {
+        apply(c: any) {
           c.slots.inject('conversation.composer.dock', function () {
             return c.slots.register(
               { name: 'conversation.composer.dock', id: 'pmo-button-strip', order: 90 },
