@@ -87,3 +87,17 @@ export interface PmoSessionPatch {
   readonly effort?: string
   readonly maxRounds?: number
 }
+
+/** Global configuration patch accepted by the settings panel. */
+export interface PmoConfigPatch {
+  readonly logFile?: string
+  readonly maxChars?: number | string
+  readonly provider?: string
+  readonly childLabel?: string
+  readonly greet?: string
+  readonly rolePrompt?: string
+  readonly maxRounds?: number | string
+  readonly childModelProvider?: string
+  readonly childModel?: string
+  readonly childReasoningEffort?: string
+}

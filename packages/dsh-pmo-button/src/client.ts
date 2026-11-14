@@ -58,6 +58,8 @@ window.__ModuleLoader__.load({
     let menuEl = null;
     let menuCleanup = null;
     let menuOnClose = null;
+    /** Remote API facade set by apply(); components call this instead of fetch. */
+    let api = null;
 
     const CSS = [
       '.pmo-ctl{position:relative;display:inline-block;flex:0 0 auto;width:56px;height:32px;border-radius:9999px}',
@@ -263,18 +265,17 @@ window.__ModuleLoader__.load({
 
       let wantCombo = '';
       function persist() {
-        const q = new URLSearchParams();
-        q.set('session', sid);
         const mv = selM.value;
         const i = mv.indexOf('|');
-        q.set('provider', i >= 0 ? mv.slice(0, i) : '');
-        q.set('model', i >= 0 ? mv.slice(i + 1) : '');
-        q.set('effort', selE.value);
-        q.set('maxRounds', inR.value.trim());
+        const patch = {
+          provider: i >= 0 ? mv.slice(0, i) : '',
+          model: i >= 0 ? mv.slice(i + 1) : '',
+          effort: selE.value,
+          maxRounds: inR.value.trim() === '' ? undefined : Number(inR.value.trim()),
+        };
         status.textContent = '保存中…';
         status.style.color = '';
-        fetch(BASE + '/session-config/set?' + q.toString())
-          .then(function (res) { return res.json(); })
+        api.setSessionConfig(sid, patch)
           .then(function (body) {
             if (body && body.ok) {
               renderEfforts(body.reasoning, body.effective && body.effective.effort);
@@ -298,8 +299,7 @@ window.__ModuleLoader__.load({
       selE.addEventListener('change', persist);
       inR.addEventListener('change', persist);
 
-      fetch(BASE + '/config')
-        .then(function (res) { return res.json(); })
+      api.config()
         .then(function (body) {
           if (!body || !body.ok || !body.config) return;
           const n = body.config.maxRounds;
@@ -310,8 +310,7 @@ window.__ModuleLoader__.load({
         })
         .catch(function () { });
 
-      fetch(BASE + '/session-config?session=' + encodeURIComponent(sid))
-        .then(function (res) { return res.json(); })
+      api.sessionConfig(sid)
         .then(function (body) {
           if (!body || !body.ok) return;
           const ov = body.override || {};
@@ -324,8 +323,7 @@ window.__ModuleLoader__.load({
         })
         .catch(function () { });
 
-      fetch(BASE + '/models')
-        .then(function (res) { return res.json(); })
+      api.models()
         .then(function (body) {
           if (!body || !body.ok || !Array.isArray(body.providers)) return;
           for (const g of body.providers) {
@@ -383,8 +381,7 @@ window.__ModuleLoader__.load({
           React.useEffect(function () {
             let dead = false;
             const tick = function () {
-              fetch(BASE + '/state?session=' + encodeURIComponent(sid))
-                .then(function (r) { return r.json(); })
+              api.state(sid)
                 .then(function (body) {
                   if (!dead && body && body.ok) {
                     setView(function (v) {
@@ -415,11 +412,7 @@ window.__ModuleLoader__.load({
           function onClick() {
             const next = !view.running;
             setView(function (v) { return Object.assign({}, v, { pending: true }); });
-            const q = new URLSearchParams();
-            q.set('session', sid);
-            q.set('enabled', next ? '1' : '0');
-            fetch(BASE + '/toggle?' + q.toString())
-              .then(function (r) { return r.json(); })
+            api.toggle(sid, next)
               .then(function (body) {
                 if (body && body.ok) setView({ running: !!body.enabled, turns: next ? 0 : view.turns, online: true, pending: false, err: null });
                 else setView(function (v) { return Object.assign({}, v, { pending: false, online: false, err: 'bad response' }); });
@@ -490,19 +483,16 @@ window.__ModuleLoader__.load({
         React.useEffect(function () {
           let dead = false;
           const merge = function (patch) { set(function (s) { return Object.assign({}, s, patch); }); };
-          fetch(BASE + '/config')
-            .then(function (r) { return r.json(); })
+          api.config()
             .then(function (body) {
               if (!dead && body && body.ok) merge({ loaded: true, cfg: body.config || {}, reasoning: body.reasoning || null, msg: '' });
               else if (!dead) merge({ loaded: true, msg: '配置读取失败' });
             })
             .catch(function () { if (!dead) merge({ loaded: true, msg: '配置读取失败（连接）' }); });
-          fetch(BASE + '/models')
-            .then(function (r) { return r.json(); })
+          api.models()
             .then(function (body) { if (!dead && body && body.ok) merge({ catalog: body.providers || [] }); })
             .catch(function () { });
-          fetch(BASE + '/providers')
-            .then(function (r) { return r.json(); })
+          api.providers()
             .then(function (body) { if (!dead && body && body.ok) merge({ providers: body.providers || [] }); })
             .catch(function () { });
           return function () { dead = true; };
@@ -510,10 +500,7 @@ window.__ModuleLoader__.load({
 
         function saveFields(patch) {
           set(function (s) { return Object.assign({}, s, { cfg: Object.assign({}, s.cfg, patch), msg: '保存中…' }); });
-          const q = new URLSearchParams();
-          for (const k of Object.keys(patch)) q.set(k, String(patch[k]));
-          fetch(BASE + '/config/save?' + q.toString())
-            .then(function (r) { return r.json(); })
+          api.saveConfig(patch)
             .then(function (body) {
               if (body && body.ok) set(function (s) {
                 return Object.assign({}, s, {
@@ -642,20 +629,45 @@ window.__ModuleLoader__.load({
       }
 
       return {
-        inject: ['slots', 'remote'],
+        inject: ['remote'],
         apply(c) {
-          // Mount the generated Typert contribution once; the Remote namespace
-          // (`ctx.remote.pmo`) becomes callable after this resolves.
-          try {
-            c.remote.$mount(contribution).then(function (dispose) {
-              window.__PMO_REMOTE_MOUNTED__ = true;
-              window.__PMO_REMOTE_DISPOSE__ = dispose;
-            }).catch(function (err) {
-              window.__PMO_REMOTE_MOUNT_ERROR__ = String(err && err.message || err);
+          // Mount the generated Typert contribution first. The namespace
+          // (`remote.pmo`) only exists after the mount, so the UI half runs in a
+          // child plugin that injects it; Cordis starts the child once ready.
+          c.remote.$mount(contribution).then(function (dispose) {
+            window.__PMO_REMOTE_MOUNTED__ = true;
+            window.__PMO_REMOTE_DISPOSE__ = dispose;
+            c.plugin({
+              inject: ['slots', 'remote.pmo'],
+              apply: applyChild,
             });
-          } catch (err) {
+          }).catch(function (err) {
             window.__PMO_REMOTE_MOUNT_ERROR__ = String(err && err.message || err);
+          });
+        },
+      };
+
+      function applyChild(c) {
+          function call(fn) {
+            return Promise.resolve()
+              .then(function () { return fn(c.remote.pmo); })
+              .then(function (result) {
+                if (result && result.ok) return Object.assign({ ok: true }, result.value);
+                const error = result && result.error;
+                return { ok: false, error: String((error && (error.message || error.code)) || 'remote call failed') };
+              })
+              .catch(function (err) { return { ok: false, error: String(err && err.message || err) }; });
           }
+          api = {
+            state: function (sid) { return call(function (pmo) { return pmo.state(sid); }); },
+            toggle: function (sid, on) { return call(function (pmo) { return pmo.toggle(sid, on); }); },
+            config: function () { return call(function (pmo) { return pmo.config(); }); },
+            saveConfig: function (patch) { return call(function (pmo) { return pmo.saveConfig(patch); }); },
+            sessionConfig: function (sid) { return call(function (pmo) { return pmo.sessionConfig(sid); }); },
+            setSessionConfig: function (sid, patch) { return call(function (pmo) { return pmo.setSessionConfig(sid, patch); }); },
+            models: function () { return call(function (pmo) { return pmo.models(); }); },
+            providers: function () { return call(function (pmo) { return pmo.providers(); }); },
+          };
           // Merge, never replace: pickDict only carries the four runtime
           // strings, and replacing `t` blanked the menu title/labels.
           t = Object.assign({}, t, pickDict(c.get ? c.get('locale') : null));
@@ -677,8 +689,7 @@ window.__ModuleLoader__.load({
               PmoControl,
             );
           });
-        },
-      };
+      }
     }
 
     try {

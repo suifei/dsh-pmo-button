@@ -36,7 +36,6 @@ import type { PmoBackend } from './service.js'
 export { PmoService } from './service.js'
 
 export const name = 'dsh-pmo-button'
-export const inject = ['webServer']
 /** Host-half version, logged on activation so an operator can tell which build
  *  the running Host actually imported (hot reload vs stale module). */
 const HOST_VERSION = '0.12.3'
@@ -1055,16 +1054,9 @@ export function apply(ctx, config) {
     return json({ ok: false, error: 'not found' }, 404)
   }
 
-  const webServer = ctx.get('webServer')
-  if (webServer) {
-    ctx.effect(() => webServer.register({ kind: 'prefix', path: '/pmo-button', resource: handle }), 'pmo-button: routes')
-  } else {
-    logger.warn?.('pmo-button: webServer absent — Client 将无法同步开关状态')
-  }
-
   // ---- Remote surface (P0 step 2): typed @Remote methods over the same logic.
-  // The legacy routes remain the single implementation for now; these methods
-  // delegate to them so no review logic is duplicated.
+  // The legacy route handler stays internal (no webServer registration), so the
+  // only way in is the authenticated /api Remote carrier.
   const callRoute = async (suffix: string) => (await handle(new Request('http://local' + suffix))).json()
   const backend: PmoBackend = {
     state: (sid) => ({
@@ -1074,6 +1066,13 @@ export function apply(ctx, config) {
     }),
     toggle: (sid, on) => callRoute(`/pmo-button/toggle?session=${encodeURIComponent(sid)}&enabled=${on ? '1' : '0'}`),
     config: () => callRoute('/pmo-button/config'),
+    saveConfig: (patch) => {
+      const q = new URLSearchParams()
+      for (const [key, value] of Object.entries(patch)) {
+        if (value !== undefined) q.set(key, String(value))
+      }
+      return callRoute(`/pmo-button/config/save?${q.toString()}`)
+    },
     sessionConfig: (sid) => callRoute(`/pmo-button/session-config?session=${encodeURIComponent(sid)}`),
     setSessionConfig: (sid, patch) => {
       const q = new URLSearchParams({ session: sid })
