@@ -6,14 +6,16 @@
   "scripts": {
     "prepare:typert": "node scripts/prepare-typert-shim.mjs",
     "build:typert": "node scripts/build-typert.mjs",
-    "build": "npm run prepare:typert && tsc -b tsconfig.host.json && npm run build:typert",
+    "build:client": "esbuild packages/dsh-pmo-button/src/client.ts --bundle --format=iife --platform=browser --outfile=packages/dsh-pmo-button/lib/client.js --external:react",
+    "build": "npm run prepare:typert && npm run build:typert && tsc -b tsconfig.host.json && npm run build:client",
     "test": "npm --prefix packages/dsh-pmo-button test",
     "test:live": "npm --prefix packages/dsh-pmo-button run test:live"
   },
   "devDependencies": {
     "@deepseek-ai/dsh-typert-generator": "0.2.2-rc.1",
     "@deepseek-ai/dsh-typert-protocol": "0.2.2-rc.1",
-    "typescript": "^6.0.3",
-    "@types/node": "^24.0.0"
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^6.0.3"
   }
 }

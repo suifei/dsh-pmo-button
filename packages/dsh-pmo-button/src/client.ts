@@ -14,6 +14,8 @@
  * the current session; global fields persist for every session.
  * Everything talks to the package-private /pmo-button/* same-origin routes.
  */
+import contribution from '../lib/typert.remote-client.js'
+
 window.__ModuleLoader__.load({
   id: '@suifei/dsh-pmo-button',
   factory(require) {
@@ -640,8 +642,20 @@ window.__ModuleLoader__.load({
       }
 
       return {
-        inject: ['slots'],
+        inject: ['slots', 'remote'],
         apply(c) {
+          // Mount the generated Typert contribution once; the Remote namespace
+          // (`ctx.remote.pmo`) becomes callable after this resolves.
+          try {
+            c.remote.$mount(contribution).then(function (dispose) {
+              window.__PMO_REMOTE_MOUNTED__ = true;
+              window.__PMO_REMOTE_DISPOSE__ = dispose;
+            }).catch(function (err) {
+              window.__PMO_REMOTE_MOUNT_ERROR__ = String(err && err.message || err);
+            });
+          } catch (err) {
+            window.__PMO_REMOTE_MOUNT_ERROR__ = String(err && err.message || err);
+          }
           // Merge, never replace: pickDict only carries the four runtime
           // strings, and replacing `t` blanked the menu title/labels.
           t = Object.assign({}, t, pickDict(c.get ? c.get('locale') : null));
