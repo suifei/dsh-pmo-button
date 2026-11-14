@@ -522,7 +522,9 @@ window.__ModuleLoader__.load({
             if (value === '' || value === undefined || value === null) return { op: 'unset', path: [key] };
             return { op: 'set', path: [key], value: value };
           });
-          form.mutate(ops, snapshot && snapshot.revision)
+          // No explicit revision fence: the form queues writes with the latest
+          // known revision, so rapid edits (12 then 6) cannot conflict.
+          form.mutate(ops)
             .then(function (accepted) {
               window.__PMO_LAST_MUTATE__ = { ops: ops, accepted: accepted, revision: snapshot && snapshot.revision };
               set(function (s) { return Object.assign({}, s, { msg: accepted ? '已保存 ✓（热生效）' : '保存失败：宿主拒绝' }); });
@@ -565,7 +567,10 @@ window.__ModuleLoader__.load({
             h('span', { className: 'pmo-cfg-label' }, label),
             h('input', {
               className: 'pmo-cfg-input', type: 'number', key: 'nf:' + key + ':' + rev, min: '0', step: '1', defaultValue: value,
-              onBlur: function (e) { saveFields({ [key]: e.target.value }); },
+              onBlur: function (e) {
+                const raw = e.target.value;
+                saveFields({ [key]: raw === '' ? '' : Number(raw) });
+              },
             }));
         }
         function textareaField(key, label, placeholder) {
