@@ -42,7 +42,7 @@ window.__ModuleLoader__.load({
       if (current && !has) {
         out.push({
           value: current,
-          label: current + (rows.length ? '（当前模型不支持）' : '（模型能力未知，先选模型）'),
+          label: current + (rows.length ? translate('（当前模型不支持）') : translate('（模型能力未知，先选模型）')),
         });
       }
       return out;
@@ -69,6 +69,37 @@ window.__ModuleLoader__.load({
       '关闭': 'Close',
       'PMO 客户端已加载': 'PMO client loaded',
       'PMO 客户端加载失败': 'PMO client failed to load',
+      '（已记录 ': ' (recorded ',
+      ' 轮）': ' rounds)',
+      ' 路由:': ' route:',
+      '（模型 / 思考等级 / 轮数）': ' (model / effort / rounds)',
+      '会话级覆盖优先于全局；模型/思考等级变更会重置审查官（记忆清零）':
+        'Session overrides win over global settings; changing model/effort resets the reviewer (memory cleared)',
+      '已保存 ✓（该思考等级不适用于此模型，已改为继承）': 'Saved ✓ (effort unsupported by this model; fell back to inherit)',
+      '留空 = 继承全局上限（': 'Empty = inherit the global cap (',
+      '已保存 ✓（热生效）': 'Saved ✓ (hot-applied)',
+      '保存失败：宿主拒绝': 'Save failed: host rejected',
+      '保存失败（连接）': 'Save failed (connection)',
+      '（连接）': ' (connection)',
+      '继承全局（': 'Inherit global (',
+      '（当前模型不支持）': ' (unsupported by this model)',
+      '（模型能力未知，先选模型）': ' (model capability unknown; pick a model first)',
+      '审查模型（异构审查：审查方 ≠ 执行方）': 'Review model (reviewer ≠ executor)',
+      '运行': 'Runtime',
+      '身份与问候': 'Identity and greeting',
+      '日志': 'Logging',
+      '审查轮数上限（0 = 不限）': 'Review round cap (0 = unlimited)',
+      '日志单块截断阈值': 'Log block truncation limit',
+      '子代理提供方': 'Subagent provider',
+      '子代理标签': 'Subagent label',
+      '启动问候文本（签到，非审查请求）': 'Startup greeting (check-in, not a review request)',
+      '身份提示词（缺席时使用内置审查规程）': 'Identity prompt (built-in rules when empty)',
+      '日志文件路径': 'Log file path',
+      '配置加载中…': 'Loading configuration…',
+      '此部署未提供该插件的配置表单': 'This deployment provides no configuration form for the plugin',
+      '各字段修改后自动保存并热生效（文本失焦保存）': 'Fields save automatically and apply live (text saves on blur)',
+      '留空 = 继承主会话；思考等级按所选模型能力列出，模型留空时只能继承；修改模型/思考等级后，下次启动会重置审查官（记忆清零）。':
+        'Empty inherits the session. Effort options follow the selected model; an empty model can only inherit. Changing model/effort resets the reviewer on the next start (memory cleared).',
       'PMO 审查循环 · 在插件详情页配置': 'PMO review loop · configure on the plugin page',
       '在下方“包含的组件”中点开 PMO 按钮行，即可编辑审查模型与身份提示词。':
         'Open the PMO button row under “Included components” to edit the review model and identity prompt.',
@@ -280,7 +311,7 @@ window.__ModuleLoader__.load({
       m.appendChild(menuRow(t.rounds, inR, hintR));
       const status = el('div', 'pmo-menu-status');
       m.appendChild(status);
-      m.appendChild(el('div', 'pmo-menu-foot', VER + ' · 会话级覆盖优先于全局；模型/思考等级变更会重置审查官（记忆清零）'));
+      m.appendChild(el('div', 'pmo-menu-foot', VER + ' · ' + t('会话级覆盖优先于全局；模型/思考等级变更会重置审查官（记忆清零）')));
       document.body.appendChild(m);
 
       const r = anchor && anchor.getBoundingClientRect
@@ -310,7 +341,7 @@ window.__ModuleLoader__.load({
           effort: selE.value,
           maxRounds: inR.value.trim() === '' ? undefined : Number(inR.value.trim()),
         };
-        status.textContent = '保存中…';
+        status.textContent = t('保存中…');
         status.style.color = '';
         api.setSessionConfig(sid, patch)
           .then(function (body) {
@@ -319,7 +350,7 @@ window.__ModuleLoader__.load({
               status.textContent = body.reset
                 ? t.savedReset
                 : body.effortAdjusted
-                  ? '已保存 ✓（该思考等级不适用于此模型，已改为继承）'
+                  ? t('已保存 ✓（该思考等级不适用于此模型，已改为继承）')
                   : t.saved;
               status.style.color = '';
             } else {
@@ -328,7 +359,7 @@ window.__ModuleLoader__.load({
             }
           })
           .catch(function () {
-            status.textContent = t.fail + '（连接）';
+            status.textContent = t.fail + t('（连接）');
             status.style.color = 'var(--dsw-alias-state-error-primary,#e5484d)';
           });
       }
@@ -341,8 +372,8 @@ window.__ModuleLoader__.load({
           if (!body || !body.ok || !body.config) return;
           const n = body.config.maxRounds;
           if (typeof n === 'number') {
-            inR.placeholder = '继承全局（' + n + ' 轮）';
-            hintR.textContent = '留空 = 继承全局上限（' + n + ' 轮）';
+            inR.placeholder = t('继承全局（') + n + t(' 轮）');
+            hintR.textContent = t('留空 = 继承全局上限（') + n + t(' 轮）');
           }
         })
         .catch(function () { });
@@ -405,6 +436,7 @@ window.__ModuleLoader__.load({
     function buildPlugin() {
       function PmoControl(props) {
         const t = controlText(translator(props));
+        const tr = translator(props);
         try {
           const sid = sessionIdOf(props);
           const state = React.useState({ running: false, turns: 0, online: null, pending: false, err: null });
@@ -463,16 +495,16 @@ window.__ModuleLoader__.load({
             if (menuOpen) { closeMenu(); return; }
             openMenu(wrapRef.current, sid, function () {
               if (aliveRef.current) setMenuOpen(false);
-            }, t);
+            }, tr);
             setMenuOpen(true);
           }
 
           const tip = VER + ' · ' + (view.online === false
             ? t.offline
             : view.pending ? t.busy
-            : view.running ? t.stop + '（已记录 ' + view.turns + ' 轮）' : t.start)
+            : view.running ? t.stop + tr('（已记录 ') + view.turns + tr(' 轮）') : t.start)
             + ' · session:' + (sid === 'no-session' ? '—' : sid.slice(0, 8))
-            + ' 路由:' + (view.online === null ? '?' : view.online ? 'ok' : '✗ ' + (view.err || ''));
+            + tr(' 路由:') + (view.online === null ? '?' : view.online ? 'ok' : '✗ ' + (view.err || ''));
 
           return h('div', { className: 'pmo-ctl', ref: wrapRef },
             h('style', null, CSS),
@@ -493,7 +525,7 @@ window.__ModuleLoader__.load({
             h('button', {
               type: 'button',
               className: 'pmo-zone right',
-              title: VER + ' · ' + t.menuTitle + '（模型 / 思考等级 / 轮数）',
+              title: VER + ' · ' + t.menuTitle + tr('（模型 / 思考等级 / 轮数）'),
               'aria-label': t.menuAria,
               'aria-haspopup': 'dialog',
               'aria-expanded': menuOpen,
@@ -552,7 +584,7 @@ window.__ModuleLoader__.load({
 
         function saveFields(patch) {
           if (!form) return;
-          set(function (s) { return Object.assign({}, s, { msg: '保存中…' }); });
+          set(function (s) { return Object.assign({}, s, { msg: tr('保存中…') }); });
           const ops = Object.keys(patch).map(function (key) {
             const value = patch[key];
             if (value === '' || value === undefined || value === null) return { op: 'unset', path: [key] };
@@ -563,9 +595,9 @@ window.__ModuleLoader__.load({
           form.mutate(ops)
             .then(function (accepted) {
               window.__PMO_LAST_MUTATE__ = { ops: ops, accepted: accepted, revision: snapshot && snapshot.revision };
-              set(function (s) { return Object.assign({}, s, { msg: accepted ? '已保存 ✓（热生效）' : '保存失败：宿主拒绝' }); });
+              set(function (s) { return Object.assign({}, s, { msg: accepted ? tr('已保存 ✓（热生效）') : tr('保存失败：宿主拒绝') }); });
             })
-            .catch(function () { set(function (s) { return Object.assign({}, s, { msg: '保存失败（连接）' }); }); });
+            .catch(function () { set(function (s) { return Object.assign({}, s, { msg: tr('保存失败（连接）') }); }); });
         }
 
         React.useEffect(function () {
@@ -585,7 +617,7 @@ window.__ModuleLoader__.load({
         if (!form || !snapshot || snapshot.status !== 'ready') {
           return h('div', { className: 'pmo-cfg' },
             h('span', { className: 'pmo-cfg-note' },
-              snapshot && snapshot.status === 'unavailable' ? '此部署未提供该插件的配置表单' : '配置加载中…'));
+              snapshot && snapshot.status === 'unavailable' ? tr('此部署未提供该插件的配置表单') : tr('配置加载中…')));
         }
 
         function textField(key, label, placeholder, wide) {
@@ -633,11 +665,11 @@ window.__ModuleLoader__.load({
           const hasCombo = combo && !(view.catalog || []).some(function (g) {
             return (g.models || []).some(function (m) { return g.provider + '|' + m.id === combo; });
           });
-          const opts = [h('option', { value: '', key: 'inherit' }, '继承主会话模型')];
+          const opts = [h('option', { value: '', key: 'inherit' }, tr('继承主会话模型'))];
           if (hasCombo) opts.push(h('option', { value: combo, key: 'current' }, combo));
           opts.push(...groups);
           return h('label', { className: 'pmo-cfg-row', key: 'childModel' },
-            h('span', { className: 'pmo-cfg-label' }, '审查模型'),
+            h('span', { className: 'pmo-cfg-label' }, tr('审查模型')),
             h('select', {
               className: 'pmo-cfg-input', value: combo,
               onChange: function (e) {
@@ -654,7 +686,7 @@ window.__ModuleLoader__.load({
             return h('option', { value: row.value, key: row.value || 'inherit' }, row.label);
           });
           return h('label', { className: 'pmo-cfg-row', key: 'childReasoningEffort' },
-            h('span', { className: 'pmo-cfg-label' }, '思考等级'),
+            h('span', { className: 'pmo-cfg-label' }, tr('思考等级')),
             h('select', {
               className: 'pmo-cfg-input', value: value,
               onChange: function (e) { saveFields({ childReasoningEffort: e.target.value }); },
@@ -665,7 +697,7 @@ window.__ModuleLoader__.load({
           const list = (view.providers && view.providers.length) ? view.providers.slice() : ['spawn', 'fork'];
           if (list.indexOf(value) === -1) list.push(value);
           return h('label', { className: 'pmo-cfg-row', key: 'provider' },
-            h('span', { className: 'pmo-cfg-label' }, '子代理提供方'),
+            h('span', { className: 'pmo-cfg-label' }, tr('子代理提供方')),
             h('select', {
               className: 'pmo-cfg-input', value: value,
               onChange: function (e) { saveFields({ provider: e.target.value }); },
@@ -675,28 +707,28 @@ window.__ModuleLoader__.load({
         return h('div', { className: 'pmo-cfg' },
           h('style', null, CSS),
           h('div', { className: 'pmo-cfg-section' },
-            h('div', { className: 'pmo-cfg-sectitle' }, '审查模型（异构审查：审查方 ≠ 执行方）'),
+            h('div', { className: 'pmo-cfg-sectitle' }, tr('审查模型（异构审查：审查方 ≠ 执行方）')),
             modelField(),
             effortField(),
-            h('div', { className: 'pmo-cfg-note' }, '留空 = 继承主会话；思考等级按所选模型能力列出，模型留空时只能继承；修改模型/思考等级后，下次启动会重置审查官（记忆清零）。'),
+            h('div', { className: 'pmo-cfg-note' }, tr('留空 = 继承主会话；思考等级按所选模型能力列出，模型留空时只能继承；修改模型/思考等级后，下次启动会重置审查官（记忆清零）。')),
           ),
           h('div', { className: 'pmo-cfg-section' },
-            h('div', { className: 'pmo-cfg-sectitle' }, '运行'),
-            numberField('maxRounds', '审查轮数上限（0 = 不限）'),
-            numberField('maxChars', '日志单块截断阈值'),
+            h('div', { className: 'pmo-cfg-sectitle' }, tr('运行')),
+            numberField('maxRounds', tr('审查轮数上限（0 = 不限）')),
+            numberField('maxChars', tr('日志单块截断阈值')),
             providerField(),
-            textField('childLabel', '子代理标签'),
+            textField('childLabel', tr('子代理标签')),
           ),
           h('div', { className: 'pmo-cfg-section' },
-            h('div', { className: 'pmo-cfg-sectitle' }, '身份与问候'),
-            textareaField('greet', '启动问候文本（签到，非审查请求）'),
-            textareaField('rolePrompt', '身份提示词（缺席时使用内置审查规程）'),
+            h('div', { className: 'pmo-cfg-sectitle' }, tr('身份与问候')),
+            textareaField('greet', tr('启动问候文本（签到，非审查请求）')),
+            textareaField('rolePrompt', tr('身份提示词（缺席时使用内置审查规程）')),
           ),
           h('div', { className: 'pmo-cfg-section' },
-            h('div', { className: 'pmo-cfg-sectitle' }, '日志'),
-            textField('logFile', '日志文件路径', '~/.dsh/logs/pmo-button.log'),
+            h('div', { className: 'pmo-cfg-sectitle' }, tr('日志')),
+            textField('logFile', tr('日志文件路径'), '~/.dsh/logs/pmo-button.log'),
           ),
-          h('div', { className: 'pmo-cfg-status', key: 'status' }, view.msg || '各字段修改后自动保存并热生效（文本失焦保存）'),
+          h('div', { className: 'pmo-cfg-status', key: 'status' }, view.msg || tr('各字段修改后自动保存并热生效（文本失焦保存）')),
         );
       }
 
