@@ -492,6 +492,7 @@ window.__ModuleLoader__.load({
         const form = props && props.form;
         const snapshot = form && form.state;
         const values = (snapshot && snapshot.value) || {};
+        const rev = snapshot && snapshot.revision;
         const st = React.useState({ catalog: [], providers: [], reasoning: null, msg: '' });
         const view = st[0];
         const set = st[1];
@@ -552,7 +553,7 @@ window.__ModuleLoader__.load({
         function textField(key, label, placeholder, wide) {
           const value = values[key] !== undefined && values[key] !== null ? String(values[key]) : '';
           const input = h('input', {
-            className: 'pmo-cfg-input', type: 'text', defaultValue: value, placeholder: placeholder || '',
+            className: 'pmo-cfg-input', type: 'text', key: 'tf:' + key + ':' + rev, defaultValue: value, placeholder: placeholder || '',
             onBlur: function (e) { saveFields({ [key]: e.target.value }); },
           });
           return h('label', { className: 'pmo-cfg-row' + (wide ? ' pmo-wide' : ''), key: key },
@@ -563,7 +564,7 @@ window.__ModuleLoader__.load({
           return h('label', { className: 'pmo-cfg-row', key: key },
             h('span', { className: 'pmo-cfg-label' }, label),
             h('input', {
-              className: 'pmo-cfg-input', type: 'number', min: '0', step: '1', defaultValue: value,
+              className: 'pmo-cfg-input', type: 'number', key: 'nf:' + key + ':' + rev, min: '0', step: '1', defaultValue: value,
               onChange: function (e) { saveFields({ [key]: e.target.value }); },
             }));
         }
@@ -572,7 +573,7 @@ window.__ModuleLoader__.load({
           return h('label', { className: 'pmo-cfg-row pmo-wide', key: key },
             h('span', { className: 'pmo-cfg-label' }, label),
             h('textarea', {
-              className: 'pmo-cfg-input', defaultValue: value, placeholder: placeholder || '',
+              className: 'pmo-cfg-input', key: 'ta:' + key + ':' + rev, defaultValue: value, placeholder: placeholder || '',
               onBlur: function (e) { saveFields({ [key]: e.target.value }); },
             }));
         }
