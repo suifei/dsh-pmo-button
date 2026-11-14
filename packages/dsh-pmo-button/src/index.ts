@@ -92,32 +92,48 @@ const STATUS_LINE = /^[\s*#>`]*STATUS[\s*]*[:：][\s*`]*(CONTINUE|DONE|NEED_HUMA
 /** @typedef {{ logFile: string, maxChars: number, provider: string, childLabel: string, greet: string, rolePrompt: string }} Config */
 export const Config = Schema.object({
   /** Deterministic default: ~/.dsh/logs/pmo-button.log (cwd-relative defaults break on restarts). */
-  logFile: Schema.string().default(path.join(os.homedir(), '.dsh', 'logs', 'pmo-button.log')),
-  maxChars: Schema.number().default(4000),
+  logFile: Schema.string().default(path.join(os.homedir(), '.dsh', 'logs', 'pmo-button.log')).volatile(),
+  maxChars: Schema.number().default(4000).volatile(),
   /** Subagent provider name registered on ctx.subagents (spawn-in-process default). */
-  provider: Schema.string().default('spawn'),
+  provider: Schema.string().default('spawn').volatile(),
   /** Persistent child label; the child session is reused across PMO starts. */
-  childLabel: Schema.string().default('PMO 子代理'),
+  childLabel: Schema.string().default('PMO 子代理').volatile(),
   /** Text sent to the child each time PMO starts (a check-in, NOT a review). */
-  greet: Schema.string().default('PMO 循环已启动（签到，非审查请求）：审查官就位，用户的下一轮工作与审查请求将随后续转发块到达。请保持待命；本轮只需回复一句确认，不要输出 STATUS。'),
+  greet: Schema.string().default('PMO 循环已启动（签到，非审查请求）：审查官就位，用户的下一轮工作与审查请求将随后续转发块到达。请保持待命；本轮只需回复一句确认，不要输出 STATUS。').volatile(),
   /** Identity prompt; delivered once per session, again only when its text changes (empty disables). */
-  rolePrompt: Schema.string().default(ROLE_PROMPT_DEFAULT),
+  rolePrompt: Schema.string().default(ROLE_PROMPT_DEFAULT).volatile(),
   /** Review-round cap per session since the last user input; 0 disables the cap. */
-  maxRounds: Schema.number().default(20),
+  maxRounds: Schema.number().default(20).volatile(),
   /** Child provider override; empty inherits the parent session's provider. */
-  childModelProvider: Schema.string().default(''),
+  childModelProvider: Schema.string().default('').volatile(),
   /** Child model override; empty inherits the parent session's model. */
-  childModel: Schema.string().default(''),
+  childModel: Schema.string().default('').volatile(),
   /** Child reasoning-effort override; empty inherits the parent session's effort. */
-  childReasoningEffort: Schema.string().default(''),
+  childReasoningEffort: Schema.string().default('').volatile(),
 })
 
 const SEP = '\n' + '─'.repeat(68) + '\n'
 
 /** @param {import('@deepseek-ai/cordis').Context} ctx @param {Config} config */
 export function apply(ctx: any, config: any) {
-  const logPath = path.resolve(config.logFile)
-  const statePath = path.join(path.dirname(logPath), 'pmo-state.json')
+  // Volatile Config fields arrive as refs; read through the proxy so every use
+  // sees the current value, and so spreads produce plain values.
+  const cfg: any = new Proxy(config, {
+    get(target: any, key: any) {
+      const value = target[key]
+      return value && typeof value.get === 'function' ? value.get() : value
+    },
+  })
+  let logPath = path.resolve(cfg.logFile)
+  let statePath = path.join(path.dirname(logPath), 'pmo-state.json')
+  ctx.on('loader/volatile-update', () => {
+    const nextLog = path.resolve(cfg.logFile)
+    if (nextLog !== logPath) {
+      logPath = nextLog
+      statePath = path.join(path.dirname(logPath), 'pmo-state.json')
+      append(`${stamp()}  [配置] 日志路径热更新 -> ${logPath}\n`)
+    }
+  })
   const logger = ctx.logger ? ctx.logger('pmo-button') : console
 
   /** @type {Set<string>} */
@@ -254,7 +270,7 @@ export function apply(ctx: any, config: any) {
       return true
     } catch (err: any) { logger.warn?.(`pmo-button: log append failed: ${err}`); return false }
   }
-  function clip(s: any, limit: any = config.maxChars) {
+  function clip(s: any, limit: any = cfg.maxChars) {
     const t = String(s ?? '')
     if (t.length <= limit) return t
     return t.slice(0, limit) + `\n…(截断，原长 ${t.length} 字符)`
@@ -274,7 +290,7 @@ export function apply(ctx: any, config: any) {
    *  (f5bb turn=98, 2026-11-13: 13,398 chars clipped to 8,000 before the parent
    *  reply, so it correctly answered "不构成审查请求"). */
   function composeForward(turn: any, userBlock: any, mainBlock: any, otherTasks: any) {
-    const budget = config.maxChars * 2
+    const budget = cfg.maxChars * 2
     const head = !userBlock && mainBlock
       ? `【PMO 轮次转发 · turn=${turn} · 续轮审查请求】本轮无新 [用户] 指令；主代理正在执行你上一轮 STATUS: CONTINUE 的"下一步"，请复审其答复并按规程输出 STATUS。\n`
       : `【PMO 轮次转发 · turn=${turn} · 审查请求】以下为用户本轮新输入（[用户]/[图片]）与主代理答复，请按规程审查并输出 STATUS。\n`
@@ -335,7 +351,7 @@ export function apply(ctx: any, config: any) {
     return src === REVIEW_SOURCE_KIND ? '[PMO审查]' : `[注入:${src}]`
   }
   function rolePromptFp() {
-    return createHash('sha256').update(config.rolePrompt).digest('hex').slice(0, 16)
+    return createHash('sha256').update(cfg.rolePrompt).digest('hex').slice(0, 16)
   }
   /** The armed parent session owning this PMO child, if any. */
   function parentOfChild(childId: any) {
@@ -377,10 +393,10 @@ export function apply(ctx: any, config: any) {
   function effectiveFor(sid: string) {
     const ov: any = overrides.get(sid) || {}
     return {
-      provider: ov.provider || config.childModelProvider,
-      model: ov.model || config.childModel,
-      effort: ov.effort || config.childReasoningEffort,
-      maxRounds: ov.maxRounds !== undefined && ov.maxRounds !== null ? Number(ov.maxRounds) : config.maxRounds,
+      provider: ov.provider || cfg.childModelProvider,
+      model: ov.model || cfg.childModel,
+      effort: ov.effort || cfg.childReasoningEffort,
+      maxRounds: ov.maxRounds !== undefined && ov.maxRounds !== null ? Number(ov.maxRounds) : cfg.maxRounds,
     }
   }
   /**
@@ -554,7 +570,7 @@ export function apply(ctx: any, config: any) {
   // appended to the prompt); cold-resumed activations fall back to 'parent'
   // inside dsh-subagent, which the pre-step gate below silences.
   //
-  // The identity prompt (config.rolePrompt) rides the NEXT start once per
+  // The identity prompt (cfg.rolePrompt) rides the NEXT start once per
   // session — creation or reuse alike — and again only when its text changes.
   // Its fingerprint is committed only after the child admitted the message,
   // so a failed send auto-retries.
@@ -563,21 +579,21 @@ export function apply(ctx: any, config: any) {
     if (!subagents) throw new Error('subagents 服务未挂载')
     const roleFp = rolePromptFp()
     const prevRole = roleSent.get(sid)
-    const needRole = config.rolePrompt.length > 0 && prevRole !== roleFp
-    const roleText = prevRole === undefined ? config.rolePrompt : `【身份设定更新，取代此前版本】\n${config.rolePrompt}`
+    const needRole = cfg.rolePrompt.length > 0 && prevRole !== roleFp
+    const roleText = prevRole === undefined ? cfg.rolePrompt : `【身份设定更新，取代此前版本】\n${cfg.rolePrompt}`
     const roleBlocks = needRole ? [{ type: 'text', text: roleText }] : []
     const existing = children.get(sid)
     if (existing) {
       // options.signal is required by sendMessage's admission path.
       const controller = new AbortController()
-      const mid = await subagents.sendMessage(agent, existing, [...roleBlocks, { type: 'text', text: `[待命] ${config.greet}` }], { signal: controller.signal })
+      const mid = await subagents.sendMessage(agent, existing, [...roleBlocks, { type: 'text', text: `[待命] ${cfg.greet}` }], { signal: controller.signal })
       if (needRole) {
         roleSent.set(sid, roleFp)
         saveState()
         append(`${stamp()}  [身份提示词] 已随问候下发 child=${String(existing).slice(0, 12)}…（文本不变则不再重复）\n`)
       }
       lastForwardReview.set(sid, false)
-      append(`${stamp()}  [子代理] 已向持久会话发送问候 child=${String(existing).slice(0, 12)}… msg=${String(mid).slice(0, 8)}… text=${config.greet}\n`)
+      append(`${stamp()}  [子代理] 已向持久会话发送问候 child=${String(existing).slice(0, 12)}… msg=${String(mid).slice(0, 8)}… text=${cfg.greet}\n`)
       return
     }
     // The parent travels INSIDE request (startActivation checks the exact live
@@ -589,7 +605,7 @@ export function apply(ctx: any, config: any) {
     const controller = new AbortController()
     const promptBlocks = [
       ...roleBlocks,
-      { type: 'text', text: `[待命] ${config.greet}` },
+      { type: 'text', text: `[待命] ${cfg.greet}` },
     ]
     // agentOptions overrides (spawn capability): resolution order — session
     // override (per-session menu) → global config → inherit the parent
@@ -599,11 +615,11 @@ export function apply(ctx: any, config: any) {
     if (eff.provider) agentOptions.provider = eff.provider
     if (eff.model) agentOptions.model = eff.model
     if (eff.effort) agentOptions.reasoningEffort = eff.effort
-    const request: any = { parent: agent, prompt: promptBlocks, description: config.childLabel }
+    const request: any = { parent: agent, prompt: promptBlocks, description: cfg.childLabel }
     if (Object.keys(agentOptions).length > 0) request.agentOptions = agentOptions
     const act = await subagents.startActivation({
-      provider: config.provider,
-      label: config.childLabel,
+      provider: cfg.provider,
+      label: cfg.childLabel,
       delivery: 'caller',
       signal: controller.signal,
       request,
@@ -620,7 +636,7 @@ export function apply(ctx: any, config: any) {
     }
     saveState()
     const providers = typeof subagents.list === 'function' ? subagents.list().join(',') : '?'
-    append(`${stamp()}  [子代理] 已创建持久子代理「${config.childLabel}」 child=${String(act.childId).slice(0, 12)}… provider=${config.provider} 审查模型=${eff.provider || '继承主会话'}/${eff.model || '继承主会话'}${eff.effort ? ' ' + eff.effort : ''} 可用=[${providers}]\n`)
+    append(`${stamp()}  [子代理] 已创建持久子代理「${cfg.childLabel}」 child=${String(act.childId).slice(0, 12)}… provider=${cfg.provider} 审查模型=${eff.provider || '继承主会话'}/${eff.model || '继承主会话'}${eff.effort ? ' ' + eff.effort : ''} 可用=[${providers}]\n`)
   }
 
   // ---- Line B: the child's verdict, delivered to the main session by the plugin
@@ -837,9 +853,9 @@ export function apply(ctx: any, config: any) {
       const editor = ctx.get('configEditor')
       return json({
         ok: true,
-        config: { ...config },
+        config: { ...cfg },
         editorAvailable: editor !== void 0,
-        reasoning: await reasoningFor(config.childModelProvider, config.childModel),
+        reasoning: await reasoningFor(cfg.childModelProvider, cfg.childModel),
       })
     }
     if (request.method === 'GET' && rest === '/models') {
@@ -1020,7 +1036,7 @@ export function apply(ctx: any, config: any) {
               const s = ctx.get('subagents')
               provs = s && typeof s.list === 'function' ? s.list().join(',') : 'list不可用'
             } catch { /* ignore */ }
-            append(`${stamp()}  [子代理] 失败: ${msg}；可用提供方=[${provs}] 已尝试=${config.provider}；栈顶: ${stack}\n`)
+            append(`${stamp()}  [子代理] 失败: ${msg}；可用提供方=[${provs}] 已尝试=${cfg.provider}；栈顶: ${stack}\n`)
           })
         }
       }
