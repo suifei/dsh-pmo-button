@@ -1,5 +1,3 @@
-// @ts-nocheck
-// Transitional: strict typing of the legacy host lands with the PmoService wiring (81 errors measured).
 /**
  * PMO button — Host half v0.12.0 (dual-line relay).
  * Per-session armed set, turn buffers, child registry, and the identity-prompt
@@ -32,6 +30,18 @@ import Schema from '@deepseek-ai/schemastery'
 import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { PmoService } from './service.js'
 import type { PmoBackend } from './service.js'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    /** Verdict delivered by this plugin; merge-extensible per the message contract. */
+    'pmo-review': {
+      kind: 'pmo-review'
+      form: 'notice'
+      summary: string
+      senderSessionId: string
+    }
+  }
+}
 
 export { PmoService } from './service.js'
 
@@ -105,46 +115,46 @@ export const Config = Schema.object({
 const SEP = '\n' + '─'.repeat(68) + '\n'
 
 /** @param {import('@deepseek-ai/cordis').Context} ctx @param {Config} config */
-export function apply(ctx, config) {
+export function apply(ctx: any, config: any) {
   const logPath = path.resolve(config.logFile)
   const statePath = path.join(path.dirname(logPath), 'pmo-state.json')
   const logger = ctx.logger ? ctx.logger('pmo-button') : console
 
   /** @type {Set<string>} */
-  let enabled = new Set()
+  let enabled = new Set<string>()
   /** sid -> { tasks: [{src,text}], texts: string[], usage: {input,output}, turn } */
-  const buffers = new Map()
-  const turnCounts = new Map()
+  const buffers = new Map<string, any>()
+  const turnCounts = new Map<string, number>()
   /** sid -> childId: the persistent PMO subagent session per parent session */
-  const children = new Map()
+  const children = new Map<string, string>()
   /** sid -> fingerprint of the identity prompt the child admitted (resent when the text changes) */
-  const roleSent = new Map()
+  const roleSent = new Map<string, string>()
   /** childId -> closing text of the child's open turn (line B capture) */
-  const childReports = new Map()
+  const childReports = new Map<string, string>()
   /** sid -> native dsh notices dropped by the pre-step gate in the open turn */
-  const gateDrops = new Map()
+  const gateDrops = new Map<string, number>()
   /** sid -> true: the child returned STATUS=DONE — forward gate until user speech or restart */
-  const doneSet = new Set()
+  const doneSet = new Set<string>()
   /** sid -> true: auto-stopped (STATUS !== CONTINUE or round cap) — button dimmed, listener live */
-  const stopped = new Set()
+  const stopped = new Set<string>()
   /** sid -> {provider?, model?, effort?, maxRounds?}: per-session overrides over global config */
-  const overrides = new Map()
+  const overrides = new Map<string, any>()
   /** sid -> fingerprint JSON of the effective review model (reset detector) */
-  const modelFps = new Map()
+  const modelFps = new Map<string, string>()
   /** sid -> true: the last forward to the child was a review request (gates STATUS parsing) */
-  const lastForwardReview = new Map()
+  const lastForwardReview = new Map<string, boolean>()
   /** sid -> true: this session earned exactly one more forward — a fresh user turn,
    *  or a whole-line STATUS: CONTINUE verdict. The ticket is consumed by the forward
    *  and is never granted by a settlement notice, which is what breaks the echo loop
    *  (f5bb, 2026-11-13: every settlement woke the parent, and every parent turn was
    *  forwarded back to the same child until the 20-round cap). */
-  const forwardAllowed = new Map()
+  const forwardAllowed = new Map<string, boolean>()
   /** sid -> review rounds forwarded since the last user input (maxRounds cap) */
-  const rounds = new Map()
+  const rounds = new Map<string, number>()
   /** 'provider/model' -> display label (resolved via ctx.llm.listModels) */
-  const labelCache = new Map()
+  const labelCache = new Map<string, string | undefined>()
 
-  function emptyBuffer() {
+  function emptyBuffer(): any {
     return {
       tasks: [], texts: [], usage: { input: 0, output: 0 },
       turn: undefined, model: undefined,
@@ -161,7 +171,7 @@ export function apply(ctx, config) {
       for (const [k, v] of Object.entries(parsed.turnCounts)) turnCounts.set(k, Number(v) || 0)
     }
     if (parsed?.buffers && typeof parsed.buffers === 'object') {
-      for (const [sid, b] of Object.entries(parsed.buffers)) {
+      for (const [sid, b] of Object.entries(parsed.buffers as Record<string, any>)) {
         if (!enabled.has(sid)) continue
         buffers.set(sid, {
           tasks: Array.isArray(b?.tasks) ? b.tasks : [],
@@ -210,7 +220,7 @@ export function apply(ctx, config) {
   } catch { /* first run or unreadable state */ }
 
   function saveState() {
-    const kept = {}
+    const kept: Record<string, any> = {}
     for (const [sid, b] of buffers) if (enabled.has(sid)) kept[sid] = b
     const doc = {
       version: 10,
@@ -220,11 +230,11 @@ export function apply(ctx, config) {
       children: Object.fromEntries(children),
       roleSent: Object.fromEntries(roleSent),
       childReports: Object.fromEntries(childReports),
-      doneSet: Object.fromEntries([...doneSet.keys()].map((sid) => [sid, true])),
-      stopped: Object.fromEntries([...stopped.keys()].map((sid) => [sid, true])),
+      doneSet: Object.fromEntries([...doneSet.keys()].map((sid: any) => [sid, true])),
+      stopped: Object.fromEntries([...stopped.keys()].map((sid: any) => [sid, true])),
       overrides: Object.fromEntries([...overrides].map(([k, v]) => [k, v])),
       modelFps: Object.fromEntries(modelFps),
-      lastForwardReview: Object.fromEntries([...lastForwardReview.keys()].map((sid) => [sid, true])),
+      lastForwardReview: Object.fromEntries([...lastForwardReview.keys()].map((sid: any) => [sid, true])),
       rounds: Object.fromEntries(rounds),
     }
     try {
@@ -232,26 +242,26 @@ export function apply(ctx, config) {
       const tmp = statePath + '.tmp'
       fs.writeFileSync(tmp, JSON.stringify(doc, null, 2), 'utf8')
       fs.renameSync(tmp, statePath)
-    } catch (err) { logger.warn?.(`pmo-button: state save failed: ${err}`) }
+    } catch (err: any) { logger.warn?.(`pmo-button: state save failed: ${err}`) }
   }
 
   // ---- log writer ----------------------------------------------------------
   function stamp() { return new Date().toLocaleString('sv-SE').replace(' ', 'T') }
-  function append(text) {
+  function append(text: any) {
     try {
       fs.mkdirSync(path.dirname(logPath), { recursive: true })
       fs.appendFileSync(logPath, text, 'utf8')
       return true
-    } catch (err) { logger.warn?.(`pmo-button: log append failed: ${err}`); return false }
+    } catch (err: any) { logger.warn?.(`pmo-button: log append failed: ${err}`); return false }
   }
-  function clip(s, limit = config.maxChars) {
+  function clip(s: any, limit: any = config.maxChars) {
     const t = String(s ?? '')
     if (t.length <= limit) return t
     return t.slice(0, limit) + `\n…(截断，原长 ${t.length} 字符)`
   }
   /** Never let credential-looking strings (npm_ tokens etc.) reach the log,
    *  the review forward, or the child's durable session. */
-  function redact(s) {
+  function redact(s: any) {
     return String(s ?? '').replace(/npm_[A-Za-z0-9]{20,}/g, 'npm_***已脱敏***')
   }
   /** Per-injection cap: a settlement notice or a skill-catalog snapshot is
@@ -263,7 +273,7 @@ export function apply(ctx, config) {
    *  fill the whole 2×maxChars budget; the child then received only [注入] lines
    *  (f5bb turn=98, 2026-11-13: 13,398 chars clipped to 8,000 before the parent
    *  reply, so it correctly answered "不构成审查请求"). */
-  function composeForward(turn, userBlock, mainBlock, otherTasks) {
+  function composeForward(turn: any, userBlock: any, mainBlock: any, otherTasks: any) {
     const budget = config.maxChars * 2
     const head = !userBlock && mainBlock
       ? `【PMO 轮次转发 · turn=${turn} · 续轮审查请求】本轮无新 [用户] 指令；主代理正在执行你上一轮 STATUS: CONTINUE 的"下一步"，请复审其答复并按规程输出 STATUS。\n`
@@ -274,7 +284,7 @@ export function apply(ctx, config) {
       // Reserve room for the omission marker plus at least one small injection.
       body += clip(mainBlock, Math.max(200, budget - body.length - 260))
     }
-    const injections = []
+    const injections: string[] = []
     for (const t of otherTasks) injections.push(`${otherLabel(t.src)} ${clip(t.text, INJECT_BLOCK_MAX)}`)
     let kept = 0
     for (const line of injections) {
@@ -290,7 +300,7 @@ export function apply(ctx, config) {
   /** Auto-stop: dim the button and gate forwarding WITHOUT deafening the
    * session listener — turn logging keeps running, and user speech (or a
    * button re-light) releases the gate so the loop can auto-resume. */
-  function extinguish(sid, why) {
+  function extinguish(sid: any, why: any) {
     stopped.add(sid)
     doneSet.add(sid)
     forwardAllowed.delete(sid)
@@ -302,47 +312,47 @@ export function apply(ctx, config) {
   // ---- text helpers ----------------------------------------------------------
   // Surface payloads nest the real message under data.message
   // (observed: {turn, step, message:{role, content, source}, usage, stream}).
-  function textOf(data) {
+  function textOf(data: any) {
     const m = data?.message ?? data
     const c = m?.content
     if (typeof c === 'string') return c
     if (Array.isArray(c)) {
-      return c.filter((b) => b && b.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n')
+      return c.filter((b: any) => b && b.type === 'text' && typeof b.text === 'string').map((b: any) => b.text).join('\n')
     }
     return ''
   }
-  function sourceKind(data) {
+  function sourceKind(data: any) {
     return data?.message?.source?.kind ?? data?.source?.kind ?? 'user'
   }
   // Only source.kind === 'user' is user speech. Every other producer kind
   // (runtime-context, time-context, steering, tool-jobs, this plugin's own
   // verdicts, kinds added by future plugins…) is context: MessageSourceMap is
   // merge-extensible, so a blacklist of known kinds can never be complete.
-  const isUserTask = (t) => t.src === 'user'
-  const isAttachTask = (t) => t.src === '__attach__'
+  const isUserTask = (t: any) => t.src === 'user'
+  const isAttachTask = (t: any) => t.src === '__attach__'
   /** Log/forward label of one non-user task; the plugin's own verdicts get their own tag. */
-  function otherLabel(src) {
+  function otherLabel(src: any) {
     return src === REVIEW_SOURCE_KIND ? '[PMO审查]' : `[注入:${src}]`
   }
   function rolePromptFp() {
     return createHash('sha256').update(config.rolePrompt).digest('hex').slice(0, 16)
   }
   /** The armed parent session owning this PMO child, if any. */
-  function parentOfChild(childId) {
+  function parentOfChild(childId: any) {
     for (const [sid, cid] of children) if (cid === childId) return sid
     return undefined
   }
   /** Compact summary of non-text content blocks (images, files, references). */
-  function nonTextSummaries(data) {
+  function nonTextSummaries(data: any) {
     const m = data?.message ?? data
     const c = m?.content
     if (!Array.isArray(c)) return []
-    const out = []
+    const out: string[] = []
     const home = process.env.DSH_HOME || path.join(process.env.USERPROFILE || process.env.HOME || '', '.dsh')
-    function storePath(sha) {
+    function storePath(sha: any) {
       return path.join(home, 'attachments', 'v1', 'objects', sha.slice(0, 2), sha)
     }
-    function humanSize(n) {
+    function humanSize(n: any) {
       const v = Number(n) || 0
       return v >= 1024 * 1024 ? (v / 1024 / 1024).toFixed(1) + 'MB' : v >= 1024 ? (v / 1024).toFixed(1) + 'KB' : v + 'B'
     }
@@ -364,8 +374,8 @@ export function apply(ctx, config) {
     }
     return out
   }
-  function effectiveFor(sid) {
-    const ov = overrides.get(sid) || {}
+  function effectiveFor(sid: string) {
+    const ov: any = overrides.get(sid) || {}
     return {
       provider: ov.provider || config.childModelProvider,
       model: ov.model || config.childModel,
@@ -379,7 +389,7 @@ export function apply(ctx, config) {
    * off/low/medium/high, no max) instead of a hardcoded superset; the
    * provider's alias mapping (high -> xhigh for qwen) stays inside the adapter.
    */
-  async function reasoningFor(provider, model) {
+  async function reasoningFor(provider: any, model: any) {
     if (!provider || !model) return null
     const llm = ctx.get('llm')
     if (!llm || typeof llm.resolveModelInfo !== 'function') return null
@@ -389,7 +399,7 @@ export function apply(ctx, config) {
       if (!r || !Array.isArray(r.efforts)) return null
       return {
         defaultEffort: r.defaultEffort || null,
-        efforts: r.efforts.map((e) => ({
+        efforts: r.efforts.map((e: any) => ({
           id: String(e.id),
           name: String(e.name || e.id),
           description: e.description ? String(e.description) : '',
@@ -398,18 +408,18 @@ export function apply(ctx, config) {
     } catch { return null }
   }
   /** Error message with its cause chain (SubagentError wraps the real reason in `cause`). */
-  function errText(err) {
-    const out = []
+  function errText(err: any) {
+    const out: string[] = []
     for (let e = err, i = 0; e && i < 4; e = e.cause, i++) out.push(e.code ? `${e.message} [${e.code}]` : String(e.message ?? e))
     return out.join(' ← ')
   }
-  function bufferFor(sid) {
+  function bufferFor(sid: any) {
     let b = buffers.get(sid)
     if (!b) { b = emptyBuffer(); buffers.set(sid, b) }
     return b
   }
 
-  function flushTurn(sid, event) {
+  function flushTurn(sid: any, event: any) {
     const b = buffers.get(sid)
     // A turn opened only by dsh's native child notice is emptied by the
     // pre-step gate and closes without a step: nothing to log or forward.
@@ -422,7 +432,7 @@ export function apply(ctx, config) {
 
     const userTasks = (b?.tasks ?? []).filter(isUserTask)
     const attachTasks = (b?.tasks ?? []).filter(isAttachTask)
-    const otherTasks = (b?.tasks ?? []).filter((t) => !isUserTask(t) && !isAttachTask(t))
+    const otherTasks = (b?.tasks ?? []).filter((t: any) => !isUserTask(t) && !isAttachTask(t))
     // Real user speech is the only unconditional forwarding ticket; a DONE-gated
     // turn is logged but not forwarded (breaks the settlement-echo cycle). A fresh
     // instruction also supersedes any verdict still pending from the last forward.
@@ -443,9 +453,9 @@ export function apply(ctx, config) {
     if (!b || (b.tasks.length === 0 && b.texts.length === 0)) {
       lines.push('(PMO 在本轮中途开启或未捕获到内容：本块可能不完整)')
     }
-    userTasks.forEach((t) => lines.push(`[PMO] ${clip(t.text)}`))
-    attachTasks.forEach((t) => lines.push(clip(t.text)))
-    otherTasks.forEach((t) => lines.push(`${otherLabel(t.src)} ${clip(t.text)}`))
+    userTasks.forEach((t: any) => lines.push(`[PMO] ${clip(t.text)}`))
+    attachTasks.forEach((t: any) => lines.push(clip(t.text)))
+    otherTasks.forEach((t: any) => lines.push(`${otherLabel(t.src)} ${clip(t.text)}`))
     // assistant/message events fire PER STEP; the conversation view shows the
     // concatenation of all step texts, so join them in order to match it.
     if (b?.texts?.length > 0) {
@@ -494,7 +504,7 @@ export function apply(ctx, config) {
     } else {
       // Attachments (images/files) are user material too: keep them in the
       // protected block, never in the optional injection budget.
-      const userParts = userTasks.map((t) => `[用户] ${t.text}`)
+      const userParts = userTasks.map((t: any) => `[用户] ${t.text}`)
       for (const a of attachTasks) userParts.push(a.text)
       const userBlock = userParts.join('\n')
       const mainBlock = b.texts?.length > 0 ? `[主代理] ${b.texts.join('\n\n---\n\n')}` : ''
@@ -520,7 +530,7 @@ export function apply(ctx, config) {
               append(`${stamp()}  [轮次转发] turn=${turn} 已送达 child=${String(childId).slice(0, 12)}…（第 ${n}${effMax > 0 ? '/' + effMax : ''} 轮审查）\n`)
               if (effMax > 0 && n >= effMax) extinguish(sid, `达到最大审查轮数 ${effMax}`)
             })
-            .catch((err) => {
+            .catch((err: any) => {
               lastForwardReview.set(sid, false)
               append(`${stamp()}  [轮次转发] turn=${turn} 失败: ${errText(err)}\n`)
             })
@@ -531,7 +541,7 @@ export function apply(ctx, config) {
     saveState()
   }
 
-  function logGoalChange(sid, event) {
+  function logGoalChange(sid: any, event: any) {
     append(`${SEP}${stamp()}  [目标变化 ${event.type}] session=${sid.slice(0, 12)}…\n${clip(JSON.stringify(event.data))}\n`)
   }
 
@@ -548,7 +558,7 @@ export function apply(ctx, config) {
   // session — creation or reuse alike — and again only when its text changes.
   // Its fingerprint is committed only after the child admitted the message,
   // so a failed send auto-retries.
-  async function ensureChildAndGreet(sid, agent) {
+  async function ensureChildAndGreet(sid: any, agent: any) {
     const subagents = ctx.get('subagents')
     if (!subagents) throw new Error('subagents 服务未挂载')
     const roleFp = rolePromptFp()
@@ -585,11 +595,11 @@ export function apply(ctx, config) {
     // override (per-session menu) → global config → inherit the parent
     // session's provider/model/reasoning effort (spawn README).
     const eff = effectiveFor(sid)
-    const agentOptions = {}
+    const agentOptions: any = {}
     if (eff.provider) agentOptions.provider = eff.provider
     if (eff.model) agentOptions.model = eff.model
     if (eff.effort) agentOptions.reasoningEffort = eff.effort
-    const request = { parent: agent, prompt: promptBlocks, description: config.childLabel }
+    const request: any = { parent: agent, prompt: promptBlocks, description: config.childLabel }
     if (Object.keys(agentOptions).length > 0) request.agentOptions = agentOptions
     const act = await subagents.startActivation({
       provider: config.provider,
@@ -619,7 +629,7 @@ export function apply(ctx, config) {
   // kind is this plugin's own (MessageSourceMap is merge-extensible; consumers
   // fall through unknown kinds), so the main-session listener never mistakes a
   // verdict for user speech.
-  function deliverVerdict(sid, childId, status, report) {
+  function deliverVerdict(sid: any, childId: any, status: any, report: any) {
     const head = status === 'CONTINUE'
       ? `【PMO 审查 · STATUS=CONTINUE】以下是常驻 PMO 审查官对你上一轮工作的审查意见，代表用户授权：请按其"下一步"执行；不同意时说明理由并停下，不要自行改写目标。`
       : status === 'DONE'
@@ -650,7 +660,7 @@ export function apply(ctx, config) {
   }
 
   /** Gate B: runs when the PMO child's turn closes. */
-  function onChildTurnEnd(sid, childId, event) {
+  function onChildTurnEnd(sid: any, childId: any, event: any) {
     const report = redact(childReports.get(childId) ?? '')
     childReports.delete(childId)
     const reason = event?.data?.reason
@@ -674,7 +684,7 @@ export function apply(ctx, config) {
     deliverVerdict(sid, childId, m[1], report)
   }
 
-  function onChildEvent(sid, childId, event) {
+  function onChildEvent(sid: any, childId: any, event: any) {
     const t = event.type
     if (t === 'turn/start') {
       childReports.delete(childId)
@@ -694,7 +704,7 @@ export function apply(ctx, config) {
   // of the PMO child's notices enters as an EMPTY step: on a turn's first step
   // the loop closes the turn without a model request, mid-turn it continues
   // with the tool results it already has. Mixed batches keep everything else.
-  ctx.on('agent/pre-step', async (payload, next) => {
+  ctx.on('agent/pre-step', async (payload: any, next: any) => {
     let isNative
     try {
       const sid = payload?.agent?.id == null ? '' : String(payload.agent.id)
@@ -702,23 +712,23 @@ export function apply(ctx, config) {
       // switching off mid-review stops the loop instead of handing it to dsh.
       const childId = children.get(sid)
       const claimed = Array.isArray(payload?.messages) ? payload.messages : []
-      isNative = (m) => childId !== undefined && NATIVE_RETURN_KINDS.has(m?.source?.kind) && m.source.senderSessionId === childId
+      isNative = (m: any) => childId !== undefined && NATIVE_RETURN_KINDS.has(m?.source?.kind) && m.source.senderSessionId === childId
       const hits = claimed.filter(isNative).length
       if (hits === 0) return next()
       gateDrops.set(sid, (gateDrops.get(sid) ?? 0) + hits)
       append(`${stamp()}  [闸门] 已拦截 dsh 原生回传 ${hits} 条 session=${sid.slice(0, 12)}… turn=${payload.turn} step=${payload.step}\n`)
       if (hits === claimed.length) return { kind: 'enter', messages: [] }
-    } catch (err) {
+    } catch (err: any) {
       logger.warn?.(`pmo-button: pre-step gate error: ${err}`)
       return next()
     }
     const decision = await next()
     if (!decision || decision.kind !== 'enter' || !Array.isArray(decision.messages)) return decision
-    return { ...decision, messages: decision.messages.filter((m) => !isNative(m)) }
+    return { ...decision, messages: decision.messages.filter((m: any) => !isNative(m)) }
   })
 
   // ---- the documented observation surface: session/event -------------------
-  ctx.on('session/event', (session, event) => {
+  ctx.on('session/event', (session: any, event: any) => {
     try {
       if (!event || typeof event.type !== 'string') return
       const sid = session?.id == null ? '' : String(session.id)
@@ -768,9 +778,9 @@ export function apply(ctx, config) {
             // entry's `name` field (observed: {"id":"glm-5.3-flash","name":"GLM-5.3-Flash"}).
             if (llm && typeof llm.listModels === 'function') {
               Promise.resolve(llm.listModels(src.provider))
-                .then((list) => {
+                .then((list: any) => {
                   const entry = Array.isArray(list)
-                    ? list.find((e) => e && (e.id === src.model || e.model === src.model))
+                    ? list.find((e: any) => e && (e.id === src.model || e.model === src.model))
                     : undefined
                   const label = entry && (entry.name ?? entry.label ?? entry.displayName)
                   const v = typeof label === 'string' && label ? label : undefined
@@ -800,14 +810,14 @@ export function apply(ctx, config) {
       } else if (t.startsWith('goal/')) {
         logGoalChange(sid, event)
       }
-    } catch (err) { logger.warn?.(`pmo-button: listener error: ${err}`) }
+    } catch (err: any) { logger.warn?.(`pmo-button: listener error: ${err}`) }
   })
 
   // ---- package-private routes (Client half is the only caller) ------------
-  function json(obj, status = 200) {
+  function json(obj: any, status: any = 200) {
     return new Response(JSON.stringify(obj), { status, headers: { 'content-type': 'application/json' } })
   }
-  async function handle(request) {
+  async function handle(request: any) {
     const url = new URL(request.url)
     if (!url.pathname.startsWith('/pmo-button')) return json({ ok: false, error: 'not found' }, 404)
     const rest = url.pathname.slice('/pmo-button'.length)
@@ -840,14 +850,14 @@ export function apply(ctx, config) {
       const entry = ctx.fiber && ctx.fiber.entry !== undefined ? ctx.fiber.entry : undefined
       if (!editor || entry === undefined) return json({ ok: false, error: '当前部署不支持持久配置保存' }, 400)
       const q = url.searchParams
-      const patch = {}
+      const patch: any = {}
       if (q.has('maxRounds')) patch.maxRounds = Math.max(0, Math.floor(Number(q.get('maxRounds')) || 0))
       if (q.has('maxChars')) patch.maxChars = Math.max(200, Math.floor(Number(q.get('maxChars')) || 4000))
       for (const k of ['logFile', 'provider', 'childLabel', 'greet', 'rolePrompt', 'childModelProvider', 'childModel', 'childReasoningEffort']) {
         if (q.has(k)) patch[k] = String(q.get(k))
       }
-      let validated
-      try { validated = Config({ ...config, ...patch }) } catch (err) {
+      let validated: any
+      try { validated = Config({ ...config, ...patch }) } catch (err: any) {
         return json({ ok: false, error: String((err && err.message) || err) }, 400)
       }
       // An effort that the selected model does not advertise would be rejected
@@ -859,7 +869,7 @@ export function apply(ctx, config) {
         if (!validated.childModelProvider || !validated.childModel) {
           validated = { ...validated, childReasoningEffort: '' }
           effortAdjusted = true
-        } else if (reasoning && reasoning.efforts.length && !reasoning.efforts.some((e) => e.id === validated.childReasoningEffort)) {
+        } else if (reasoning && reasoning.efforts.length && !reasoning.efforts.some((e: any) => e.id === validated.childReasoningEffort)) {
           validated = { ...validated, childReasoningEffort: '' }
           effortAdjusted = true
         }
@@ -874,7 +884,7 @@ export function apply(ctx, config) {
       // silently emptied this route before 0.12.1.
       const llm = ctx.get('llm')
       if (!llm || typeof llm.listProviders !== 'function') return json({ ok: false, error: 'llm 服务不可用' }, 400)
-      const out = []
+      const out: any[] = []
       const providers = await llm.listProviders()
       for (const p of Array.isArray(providers) ? providers : []) {
         const id = typeof p === 'string' ? p : (p && p.id)
@@ -886,7 +896,7 @@ export function apply(ctx, config) {
             out.push({
               provider: id,
               name,
-              models: models.map((m) => ({
+              models: models.map((m: any) => ({
                 id: m.id ?? m.model ?? '',
                 name: m.name ?? m.label ?? m.id ?? m.model ?? '',
               })),
@@ -941,7 +951,7 @@ export function apply(ctx, config) {
           after = effectiveFor(sid)
           reasoning = await reasoningFor(after.provider, after.model)
           effortAdjusted = true
-        } else if (reasoning && reasoning.efforts.length && !reasoning.efforts.some((e) => e.id === cur.effort)) {
+        } else if (reasoning && reasoning.efforts.length && !reasoning.efforts.some((e: any) => e.id === cur.effort)) {
           delete cur.effort
           overrides.set(sid, cur)
           after = effectiveFor(sid)
@@ -959,7 +969,7 @@ export function apply(ctx, config) {
         // when qwen was selected but the child still ran deepseek-official).
         modelFps.set(sid, afterFp)
         if (children.has(sid)) {
-          childReports.delete(children.get(sid))
+          childReports.delete(children.get(sid)!)
           children.delete(sid)
           roleSent.delete(sid)
           reset = true
@@ -975,7 +985,7 @@ export function apply(ctx, config) {
               try {
                 await ensureChildAndGreet(sid, agent)
                 append(`${stamp()}  [子代理] 已按新审查模型重建审查官（下一次转发使用它）\n`)
-              } catch (err) {
+              } catch (err: any) {
                 append(`${stamp()}  [子代理] 重置后重建审查官失败: ${errText(err)}（下次点亮时会重新创建）\n`)
               }
             } else {
@@ -1012,7 +1022,7 @@ export function apply(ctx, config) {
         const hasModelOverride = Boolean(eff.provider || eff.model || eff.effort)
         const modelChanged = prev === undefined ? hasModelOverride : prev !== fp
         if (modelChanged && children.has(sid)) {
-          childReports.delete(children.get(sid))
+          childReports.delete(children.get(sid)!)
           children.delete(sid)
           roleSent.delete(sid)
           append(`${stamp()}  [子代理] 审查模型配置变更或指纹缺失，已重置审查官：下次启动创建新子代理（审查模型：${eff.provider || '继承主会话'}/${eff.model || '继承主会话'}${eff.effort ? ' ' + eff.effort : ''}；审查记忆清零）\n`)
@@ -1037,7 +1047,7 @@ export function apply(ctx, config) {
         if (!agents || !agent) {
           append(`${stamp()}  [子代理] 无法启动：当前会话无活跃 Agent（agents=${agents ? '有' : '无'}）\n`)
         } else {
-          ensureChildAndGreet(sid, agent).catch((err) => {
+          ensureChildAndGreet(sid, agent).catch((err: any) => {
             const msg = err && err.message ? err.message : String(err)
             const stack = err && err.stack ? err.stack.split('\n').slice(0, 3).join(' | ') : ''
             let provs = '?'
@@ -1059,22 +1069,22 @@ export function apply(ctx, config) {
   // only way in is the authenticated /api Remote carrier.
   const callRoute = async (suffix: string) => (await handle(new Request('http://local' + suffix))).json()
   const backend: PmoBackend = {
-    state: (sid) => ({
+    state: (sid: any) => ({
       sessionId: sid,
       enabled: enabled.has(sid) && !stopped.has(sid),
       turns: turnCounts.get(sid) ?? 0,
     }),
-    toggle: (sid, on) => callRoute(`/pmo-button/toggle?session=${encodeURIComponent(sid)}&enabled=${on ? '1' : '0'}`),
+    toggle: (sid: any, on: any) => callRoute(`/pmo-button/toggle?session=${encodeURIComponent(sid)}&enabled=${on ? '1' : '0'}`),
     config: () => callRoute('/pmo-button/config'),
-    saveConfig: (patch) => {
+    saveConfig: (patch: any) => {
       const q = new URLSearchParams()
       for (const [key, value] of Object.entries(patch)) {
         if (value !== undefined) q.set(key, String(value))
       }
       return callRoute(`/pmo-button/config/save?${q.toString()}`)
     },
-    sessionConfig: (sid) => callRoute(`/pmo-button/session-config?session=${encodeURIComponent(sid)}`),
-    setSessionConfig: (sid, patch) => {
+    sessionConfig: (sid: any) => callRoute(`/pmo-button/session-config?session=${encodeURIComponent(sid)}`),
+    setSessionConfig: (sid: any, patch: any) => {
       const q = new URLSearchParams({ session: sid })
       for (const [key, value] of Object.entries(patch)) {
         if (value !== undefined) q.set(key, String(value))
@@ -1084,6 +1094,9 @@ export function apply(ctx, config) {
     models: () => callRoute('/pmo-button/models'),
     providers: () => ({ providers: (ctx.get('subagents')?.list?.() ?? []) as string[] }),
   }
-  ctx.plugin(PmoService, backend)
+  if (typeof ctx.plugin === 'function') ctx.plugin(PmoService, backend)
+  // Test-harness hook: the fake Context used by review-gate.test.mjs has no
+  // Cordis registry, so expose the internal handler instead of a web route.
+  else (ctx as any).__pmoRoute = handle
 }
 

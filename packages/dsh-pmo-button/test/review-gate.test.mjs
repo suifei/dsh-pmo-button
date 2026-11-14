@@ -69,6 +69,7 @@ function harness(state, opts = {}) {
   })
 
   const emitTo = (sid, event) => listeners['session/event'].forEach((fn) => fn({ id: sid }, event))
+  route = route || ctx.__pmoRoute
   const emit = (event) => emitTo(SID, event)
   /** One whole turn of the PMO child: its closing text, then turn/end. */
   const childTurn = (text, reason = { kind: 'completed' }) => {
