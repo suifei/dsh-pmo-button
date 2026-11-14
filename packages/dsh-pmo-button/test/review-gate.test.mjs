@@ -125,11 +125,18 @@ function harness(state, opts = {}) {
     const res = await route(new Request(`http://x/pmo-button/toggle?session=${SID}&enabled=${on ? 1 : 0}`))
     return res.json()
   }
+  const ensureChild = async (turn = 1) => {
+    turnStart(turn)
+    userMsg('首轮任务')
+    assistantMsg('首轮答复')
+    turnEnd(turn)
+    await new Promise((r) => setTimeout(r, 150))
+  }
   const forwards = () => sent.filter((s) => s.text.startsWith('【PMO 轮次转发'))
   const logText = () => fs.readFileSync(logFile, 'utf8')
   const wait = (ms = 30) => new Promise((r) => setTimeout(r, ms))
   const cleanup = () => fs.rmSync(dir, { recursive: true, force: true })
-  return { dir, sent, activated, followups, childTurn, commitVerdict, native, preStep, toggle, forwards, logText, wait, cleanup, turnStart, turnEnd, userMsg, assistantMsg, settlement, imageMsg, route, emit }
+  return { dir, sent, activated, followups, childTurn, commitVerdict, native, preStep, toggle, ensureChild, forwards, logText, wait, cleanup, turnStart, turnEnd, userMsg, assistantMsg, settlement, imageMsg, route, emit }
 }
 
 test('request/header reads effort from data.header.config.reasoningEffort', async (t) => {
@@ -177,7 +184,7 @@ test('user turn forwards; a verdict-less reply stops the loop', async (t) => {
   h.userMsg('请复核这次改动')
   h.assistantMsg('改好了')
   h.turnEnd(2)
-  await h.wait()
+  await h.wait(150)
   const first = h.forwards()
   assert.equal(first.length, 1)
   assert.match(first[0].text, /\[用户\] 请复核这次改动/)
@@ -210,7 +217,7 @@ test('CONTINUE earns one continuation review; DONE holds the gate', async (t) =>
   h.userMsg('第一件事')
   h.assistantMsg('做完了')
   h.turnEnd(1)
-  await h.wait()
+  await h.wait(150)
   assert.equal(h.forwards().length, 1)
 
   h.childTurn('STATUS: CONTINUE\n结论：无问题\n下一步：补测试')
@@ -297,7 +304,9 @@ test('pre-upgrade state with an override resets the child (fingerprint gap)', as
   t.after(() => h.cleanup())
   await h.toggle(true)
   await h.wait()
-
+  assert.equal(h.activated.length, 0, 'toggle only arms; the child is created on the first forward')
+  assert.equal(h.sent.filter((s) => s.targetId === 'old-child').length, 0, 'the old child must not be reused')
+  await h.ensureChild()
   assert.equal(h.activated.length, 1, 'a changed/unknown review model must create a fresh child')
   assert.equal(h.sent.filter((s) => s.targetId === 'old-child').length, 0, 'the old child must not be reused')
 })
@@ -321,9 +330,10 @@ test('pre-upgrade state without an override reuses the child', async (t) => {
   t.after(() => h.cleanup())
   await h.toggle(true)
   await h.wait()
-
   assert.equal(h.activated.length, 0)
-  assert.equal(h.sent.filter((s) => s.targetId === 'old-child').length, 1, 'inherit case keeps the durable child')
+  await h.ensureChild()
+  assert.equal(h.activated.length, 0)
+  assert.ok(h.sent.filter((s) => s.targetId === 'old-child').length >= 1, 'inherit case keeps the durable child')
 })
 
 test('line B: check-in acks and side chats with the child never reach the main session', async (t) => {
@@ -331,13 +341,14 @@ test('line B: check-in acks and side chats with the child never reach the main s
   t.after(() => h.cleanup())
   await h.toggle(true)
   await h.wait()
+  await h.ensureChild()
   assert.equal(h.activated.length, 1)
   assert.equal(h.activated[0].delivery, 'caller', 'no native settlement notice or send_message guidance on creation')
   assert.match(h.activated[0].request.prompt.at(-1).text, /^\[待命\] /)
 
   h.childTurn('收到，待命。')
   h.childTurn('STATUS: CONTINUE\n（用户在侧栏直接与审查官对话，不是审查回复）')
-  assert.equal(h.followups.length, 0)
+  assert.equal(h.followups.length, 1, 'only the forwarded review reply, never a check-in follow-up')
 })
 
 test('line B: an abnormal reviewer turn becomes NEED_HUMAN', async (t) => {
@@ -349,7 +360,7 @@ test('line B: an abnormal reviewer turn becomes NEED_HUMAN', async (t) => {
   h.userMsg('做 X')
   h.assistantMsg('做完了')
   h.turnEnd(1)
-  await h.wait()
+  await h.wait(150)
 
   h.childTurn('', { kind: 'error', error: { message: 'boom', code: 'UNKNOWN' } })
   assert.equal(h.followups.length, 1)
@@ -362,6 +373,7 @@ test('pre-step gate: native child notices never enter the model', async (t) => {
   t.after(() => h.cleanup())
   await h.toggle(true)
   await h.wait()
+  await h.ensureChild()
   const user = { id: 'u1', source: { kind: 'user' } }
   const context = { id: 'ctx', source: { kind: 'runtime-context' } }
 
@@ -392,16 +404,40 @@ test('pre-step gate: native child notices never enter the model', async (t) => {
   assert.deepEqual(await h.preStep([h.native()], passthrough), { kind: 'enter', messages: [] })
 })
 
+test('dimming pauses forwarding and keeps the child; re-light reuses it', async (t) => {
+  const h = harness()
+  t.after(() => h.cleanup())
+  await h.toggle(true)
+  await h.ensureChild()
+  const created = h.activated.length
+  const forwarded = h.forwards().length
+  await h.toggle(false)
+  assert.match(h.logText(), /\[PMO 暂停\]/)
+
+  h.turnStart(2)
+  h.userMsg('暂停期间的工作')
+  h.assistantMsg('做完了')
+  h.turnEnd(2)
+  await h.wait(80)
+  assert.equal(h.forwards().length, forwarded, 'paused PMO must not forward')
+
+  await h.toggle(true)
+  await h.ensureChild(3)
+  assert.equal(h.activated.length, created, 're-light reuses the same child')
+  assert.equal(h.forwards().length, forwarded + 1, 're-light resumes forwarding')
+})
+
 test('identity prompt: once per session, again only when its text changes', async (t) => {
   const h = harness()
   await h.toggle(true)
   await h.wait()
+  await h.ensureChild()
   assert.equal(h.activated[0].request.prompt.length, 2, 'role + check-in on creation')
   await h.toggle(false)
   await h.toggle(true)
-  await h.wait()
-  assert.equal(h.sent.length, 1)
-  assert.doesNotMatch(h.sent[0].text, /身份规程/, 'unchanged prompt is not resent')
+  await h.ensureChild()
+  assert.equal(h.activated.length, 1, 'the existing child is reused')
+  assert.equal(h.sent.filter((s) => /身份规程/.test(s.text)).length, 0, 'unchanged prompt is not resent')
 
   // A pre-0.12 state stored `true` instead of a fingerprint: resent once, marked as an update.
   const state = JSON.parse(fs.readFileSync(path.join(h.dir, 'pmo-state.json'), 'utf8'))
@@ -410,9 +446,9 @@ test('identity prompt: once per session, again only when its text changes', asyn
   const h2 = harness(state)
   t.after(() => h2.cleanup())
   await h2.toggle(true)
-  await h2.wait()
+  await h2.ensureChild()
   assert.equal(h2.activated.length, 0, 'child reused')
-  assert.match(h2.sent[0].text, /【身份设定更新，取代此前版本】\n身份规程/)
+  assert.ok(h2.sent.some((s) => /【身份设定更新，取代此前版本】\n身份规程/.test(s.text)), 'the update ships on the next greet: ' + JSON.stringify(h2.sent.map((s) => s.text.slice(0, 120))))
 })
 
 test('only source.kind === "user" is user speech (runtime-context is context)', async (t) => {
@@ -468,7 +504,8 @@ test('session model/effort change resets the reviewer immediately and uses the m
   t.after(() => h.cleanup())
   await h.toggle(true)
   await h.wait()
-  assert.equal(h.activated.length, 1, 'starting the loop creates the inherited reviewer')
+  await h.ensureChild()
+  assert.equal(h.activated.length, 1, 'the first forward creates the inherited reviewer')
 
   const set = async (qs) => {
     const res = await h.route(new Request('http://x/pmo-button/session-config/set?' + qs))
@@ -490,12 +527,13 @@ test('session model/effort change resets the reviewer immediately and uses the m
   })
 
   // The recreated child is reused; the review is not skipped for "no child".
+  const forwardsBefore = h.forwards().length
   h.turnStart(1)
   h.userMsg('继续')
   h.assistantMsg('继续做')
   h.turnEnd(1)
-  await h.wait()
-  assert.equal(h.forwards().length, 1, 'the next review is delivered to the recreated child')
+  await h.wait(150)
+  assert.equal(h.forwards().length, forwardsBefore + 1, 'the next review is delivered to the recreated child')
   assert.equal(h.activated.length, 2, 'the recreated child is reused')
 
   // An effort the model does not advertise is not persisted.

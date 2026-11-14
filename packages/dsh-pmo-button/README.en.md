@@ -209,7 +209,7 @@ STATUS: CONTINUE …（审查官结束语全文）
 │ Line A: main session/event → turn/end → log + forward │
 │ Line B: child session/event → gate(STATUS) → followup │
 │ agent/pre-step gate: drops native child notices       │
-│ pmo-state.json: enabled set/child/identity fp/rounds  │
+│ storage domain pmo_button: enabled set/child/identity fp/rounds │
 └──────┬──────────────────────────────▲─────────────────┘
        │ A: subagents.sendMessage      │ B: child turn/end
 ┌──────▼──────── persistent child (continuable) ───────┐
@@ -259,6 +259,7 @@ dsh --profile <your-profile> --dump-config   # verify the plugin tree
 
 ## 📌 Versions
 
+- **0.13.0** — breaking upgrade (requires DSH `>=0.2.2-rc.1 <0.3.0`): state moves from `pmo-state.json` into the `pmo_button` storage domain (migrated automatically on first start; the old file is renamed `*.migrated`); the reviewer is created **on the first forward** (lighting up only sets `enabled`); dimming pauses forwarding and releases the gates while keeping the reviewer and its memory, and re-lighting resumes; review verdicts render as a dedicated Chat node titled `PMO 审查 · STATUS=…`; UI copy uses the Client locale service (zh/en); `client.ts` drops `@ts-nocheck` and compiles under strict.
 - **0.12.3** — docs-only: bilingual README (Chinese default + English), two UI screenshots, the global config path and the "heterogeneous model + max effort" recommendation; no code/behavior changes, same functionality as 0.12.2.
 - **0.12.2** — the per-session menu and the global config panel share one effort selector: both list only the model capabilities from `llm.resolveModelInfo()`; an empty model can only inherit (no more hardcoded `minimal/low/medium/high/max`); saving clears an effort the model does not support.
 - **0.12.1** — fix: a reviewer model/effort change now resets the reviewer immediately (previously it waited for the next light-up, causing "qwen selected but deepseek-official still running → old-key 401"); effort options come from `llm.resolveModelInfo()` (qwen no longer offers `max`; `high → xhigh` stays a provider alias); the global config validates the model/effort pair; the child-creation log records the actual reviewer model.

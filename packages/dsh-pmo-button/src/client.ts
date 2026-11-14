@@ -126,7 +126,7 @@ window.__ModuleLoader__.load({
     }
 
     const BASE = '/pmo-button';
-    const VER = 'v0.12.3';
+    const VER = 'v0.13.0';
     /** Effort choices from the model's DSH reasoning catalog. No hardcoded
      *  minimal/low/... fallback: without a concrete model the only honest
      *  choice is inherit. Both the session menu and the config panel use this

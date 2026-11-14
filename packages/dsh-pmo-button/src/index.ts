@@ -50,7 +50,7 @@ export { PmoService } from './service.js'
 export const name = 'dsh-pmo-button'
 /** Host-half version, logged on activation so an operator can tell which build
  *  the running Host actually imported (hot reload vs stale module). */
-const HOST_VERSION = '0.12.3'
+const HOST_VERSION = '0.13.0'
 
 /** The identity prompt; delivered once per session and re-delivered only when its text changes. */
 const ROLE_PROMPT_DEFAULT = [
@@ -186,6 +186,8 @@ export function apply(ctx: any, config: any) {
   const turnCounts = new Map<string, number>()
   /** sid -> childId: the persistent PMO subagent session per parent session */
   const children = new Map<string, string>()
+  /** sid -> armed since the last greet; the first forward greets once. */
+  const greeted = new Set<string>()
   /** sid -> fingerprint of the identity prompt the child admitted (resent when the text changes) */
   const roleSent = new Map<string, string>()
   /** childId -> closing text of the child's open turn (line B capture) */
@@ -596,13 +598,16 @@ export function apply(ctx: any, config: any) {
     // STATUS: CONTINUE verdict since the last forward. Turns woken by anything
     // else (other subagents' notices, system reminders) are never forwarded.
     const childId = children.get(sid)
+    const armed = enabled.has(sid)
     const ticket = forwardAllowed.get(sid) === true
-    if (gated) {
+    if (!armed) {
+      append(`${stamp()}  [轮次转发] turn=${turn} 跳过：PMO 未启动（暂停中）\n`)
+    } else if (gated) {
       append(`${stamp()}  [轮次转发] turn=${turn} 跳过：DONE 后静默（等待用户输入或重新启动）\n`)
     } else if (!ticket) {
       append(`${stamp()}  [轮次转发] turn=${turn} 跳过：无用户输入且无 CONTINUE 判定（防回声）\n`)
-    } else if (!childId || !b) {
-      append(`${stamp()}  [轮次转发] turn=${turn} 跳过：无活跃子代理或空缓冲\n`)
+    } else if (!b) {
+      append(`${stamp()}  [轮次转发] turn=${turn} 跳过：空缓冲\n`)
     } else {
       // Attachments (images/files) are user material too: keep them in the
       // protected block, never in the optional injection budget.
@@ -620,16 +625,28 @@ export function apply(ctx: any, config: any) {
         if (!agent || !subagentsSvc || typeof subagentsSvc.sendMessage !== 'function') {
           append(`${stamp()}  [轮次转发] turn=${turn} 跳过：父会话无活跃 Agent 或 subagents 不可用\n`)
         } else {
-          const controller = new AbortController()
           const effMax = effectiveFor(sid).maxRounds
           forwardAllowed.delete(sid) // consumed: the next forward needs a fresh user turn or CONTINUE
-          lastForwardReview.set(sid, true)
-          Promise.resolve(subagentsSvc.sendMessage(agent, childId, [{ type: 'text', text: forward }], { signal: controller.signal }))
+          const send = (target: any) => Promise.resolve(subagentsSvc.sendMessage(
+            agent, target, [{ type: 'text', text: forward }], { signal: new AbortController().signal }))
+          // P1-7: the child is created (and greeted) on the first forward after
+          // arming, not on toggle; later forwards reuse it without another greet.
+          const prepare = greeted.has(sid)
+            ? Promise.resolve()
+            : ensureChildAndGreet(sid, agent).then(() => { greeted.add(sid) })
+          const run = prepare.then(() => {
+            const target = children.get(sid)
+            if (!target) throw new Error('子代理创建后仍无 id')
+            lastForwardReview.set(sid, true)
+            return send(target)
+          })
+          run
             .then(() => {
+              const target = children.get(sid) ?? childId
               const n = (rounds.get(sid) ?? 0) + 1
               rounds.set(sid, n)
               saveState()
-              append(`${stamp()}  [轮次转发] turn=${turn} 已送达 child=${String(childId).slice(0, 12)}…（第 ${n}${effMax > 0 ? '/' + effMax : ''} 轮审查）\n`)
+              append(`${stamp()}  [轮次转发] turn=${turn} 已送达 child=${String(target).slice(0, 12)}…（第 ${n}${effMax > 0 ? '/' + effMax : ''} 轮审查）\n`)
               if (effMax > 0 && n >= effMax) extinguish(sid, `达到最大审查轮数 ${effMax}`)
             })
             .catch((err: any) => {
@@ -1095,6 +1112,7 @@ export function apply(ctx: any, config: any) {
         }
         modelFps.set(sid, fp)
         enabled.add(sid)
+        greeted.delete(sid)
         turnCounts.set(sid, turnCounts.get(sid) ?? 0)
         stopped.delete(sid)
         doneSet.delete(sid)
@@ -1102,29 +1120,21 @@ export function apply(ctx: any, config: any) {
         lastForwardReview.delete(sid)
         forwardAllowed.delete(sid)
       } else {
+        // P1-8: dimming pauses forwarding and releases the gates; the child and
+        // its memory stay, so re-lighting resumes the same reviewer.
         enabled.delete(sid)
         forwardAllowed.delete(sid)
+        greeted.delete(sid)
+        doneSet.delete(sid)
+        stopped.delete(sid)
+        rounds.delete(sid)
+        lastForwardReview.delete(sid)
+        append(`${stamp()}  [PMO 暂停] session=${sid.slice(0, 12)}… 停转发、解除闸门，审查官与记忆保留\n`)
       }
       saveState()
       append(`${SEP}${stamp()}  [PMO ${on ? '启动' : '停止'}] session=${sid.slice(0, 12)}…\n`)
-      if (on && sid !== 'unknown') {
-        const agents = ctx.get('agents')
-        const agent = agents && typeof agents.get === 'function' ? agents.get(sid) : undefined
-        if (!agents || !agent) {
-          append(`${stamp()}  [子代理] 无法启动：当前会话无活跃 Agent（agents=${agents ? '有' : '无'}）\n`)
-        } else {
-          ensureChildAndGreet(sid, agent).catch((err: any) => {
-            const msg = err && err.message ? err.message : String(err)
-            const stack = err && err.stack ? err.stack.split('\n').slice(0, 3).join(' | ') : ''
-            let provs = '?'
-            try {
-              const s = ctx.get('subagents')
-              provs = s && typeof s.list === 'function' ? s.list().join(',') : 'list不可用'
-            } catch { /* ignore */ }
-            append(`${stamp()}  [子代理] 失败: ${msg}；可用提供方=[${provs}] 已尝试=${cfg.provider}；栈顶: ${stack}\n`)
-          })
-        }
-      }
+      // P1-7: toggle only arms the session; the child is created on the first
+      // forward (ensureChildAndGreet runs there).
       return json({ ok: true, sessionId: sid, enabled: on, turns: turnCounts.get(sid) ?? 0, child: children.get(sid) ?? null })
     }
     return json({ ok: false, error: 'not found' }, 404)

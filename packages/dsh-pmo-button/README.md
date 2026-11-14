@@ -93,7 +93,7 @@ DSH 的 **goal** 与 **PMO 按钮**都会让会话“自己往下走”，但实
 | 完成 / 停止 | 模型在 goal round 里自判；`complete` 需直接人类输入或当前 goal round 的权威；`blocked` 需同一阻塞条件持续若干轮（默认 3） | 审查官给 `STATUS`；缺 STATUS / 异常结束按 `NEED_HUMAN` 停转 |
 | 轮数 | `maxGoalRounds` 属于 goal（部署默认 256） | `maxRounds` 属于会话（默认 20） |
 | 模型 | 就是主会话的模型 | 可全局 / 会话级换 provider、model、思考等级 |
-| 状态 | 会话日志内的目标（`goal/change`，phase / revision / roundsStarted） | `pmo-state.json`（启用集 / 子代理 / 轮数 / 模型指纹）+ 子代理会话 |
+| 状态 | 会话日志内的目标（`goal/change`，phase / revision / roundsStarted） | storage domain `pmo_button`（启用集 / 子代理 / 轮数 / 模型指纹），子代理会话 |
 | 控制 | goal service 的 pause / resume / complete / block / clear + 轮数 | 按钮启停、`DONE`/`NEED_HUMAN` 自动熄灭、`maxRounds`、会话级模型 / 思考 / 轮数覆盖 |
 | 权威 | 目标由用户 / 代理定义；完成 / 暂停 / 编辑需直接人类或 goal round 权威 | 审查意见以“代表用户授权”注入；`NEED_HUMAN` 是刹车 |
 | 适用 | 长任务的目标管理与续跑 | 对每一轮迭代做独立、可异构的评审与导航 |
@@ -209,7 +209,7 @@ STATUS: CONTINUE …（审查官结束语全文）
 │ 线路A：主会话 session/event → turn/end 落日志+转发     │
 │ 线路B：子代理 session/event → 闸门(STATUS) → followup  │
 │ agent/pre-step 闸门：丢弃 dsh 原生子代理回传           │
-│ pmo-state.json：启用集/子代理/身份指纹/审查轮数 持久化   │
+│ storage domain pmo_button：启用集/子代理/身份指纹/审查轮数   │
 └──────┬──────────────────────────────▲────────────┘
        │ A: subagents.sendMessage      │ B: 子代理 turn/end
 ┌──────▼──────── 持久子代理（continuable）──┴─────────┐
@@ -258,6 +258,7 @@ dsh --profile <你的profile> --dump-config   # 验证插件树
 
 ## 📌 版本
 
+- **0.13.0** — 破坏性升级（需 DSH `>=0.2.2-rc.1 <0.3.0`）：状态从 `pmo-state.json` 迁入 storage domain `pmo_button`（首次启动自动迁移，旧文件重命名为 `*.migrated`）；审查官改为**首次转发才创建**（点亮只置 `enabled`）；熄灭=暂停转发并解除闸门，审查官与记忆保留，再点亮继续；审查意见以专用 Chat 节点呈现（标题 `PMO 审查 · STATUS=…`）；UI 文案走 Client locale（中文/英文）；`client.ts` 移除 `@ts-nocheck` 并通过 strict 编译。
 - **0.12.3** — 文档版：双语 README（默认中文 + English）、两张界面截图、全局配置路径与“异构模型 + 思考拉满”建议；无代码/行为变更，功能与 0.12.2 相同。
 - **0.12.2** — 会话级菜单与全局配置面板统一为同一份 effort 选择器：两者都只按 `llm.resolveModelInfo()` 的模型能力列项；模型留空时只能继承（不再出现硬编码 `minimal/low/medium/high/max`）；保存时清掉与模型不匹配的 effort。
 - **0.12.1** — 修复：会话级审查模型/思考等级变更后立即重置审查官（此前要等下次点亮，出现“选了 qwen 却仍跑 deepseek-official，旧 key 401”）；思考等级改为按 `llm.resolveModelInfo()` 的模型能力动态列出（qwen 不再出现 `max`，`high → xhigh` 仍由 provider 别名处理）；全局配置同样校验模型/effort 组合；子代理创建日志记录实际审查模型。
