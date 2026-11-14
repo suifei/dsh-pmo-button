@@ -60,6 +60,10 @@ window.__ModuleLoader__.load({
     let menuCleanup = null;
     let menuOnClose = null;
     /** Remote API facade set by apply(); components call this instead of fetch. */
+    /** Package name: the bundle slot key and the row-config key prefix. */
+    const BUNDLE_NAME = '@suifei/dsh-pmo-button';
+    /** Patch row id declared in cordis.patch.yml. */
+    const ROW_ID = 'pmo-button';
     let api = null;
 
     const CSS = [
@@ -698,13 +702,13 @@ window.__ModuleLoader__.load({
           t = Object.assign({}, t, pickDict(c.get ? c.get('locale') : null));
           c.slots.inject('plugins.bundle.config', function () {
             return c.slots.register(
-              { name: 'plugins.bundle.config', key: '@suifei/dsh-pmo-button' },
+              { name: 'plugins.bundle.config', key: BUNDLE_NAME },
               BundleNote,
             );
           });
           c.slots.inject('plugins.row.config', function () {
             return c.slots.register(
-              { name: 'plugins.row.config', key: 'pmo-button' },
+              { name: 'plugins.row.config', key: BUNDLE_NAME + '#' + ROW_ID },
               ConfigPanel,
             );
           });
