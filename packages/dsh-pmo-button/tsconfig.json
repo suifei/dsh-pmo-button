@@ -12,7 +12,10 @@
     "outDir": "lib",
     "allowJs": false,
     "esModuleInterop": true,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "@deepseek-ai/dsh-typert-protocol": ["../../packages/typert-protocol/src/index.d.ts"]
+    }
   },
   "include": ["src/**/*.ts"]
 }

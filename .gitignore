@@ -3,6 +3,7 @@ node_modules/
 
 # Build-time Typert declaration shim and other build output (never committed)
 build/
+packages/typert-protocol/
 
 # Package build output (compiled from src/)
 packages/dsh-pmo-button/lib/

@@ -17,7 +17,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const root = process.cwd()
-const dir = path.join(root, 'build', 'typert-protocol')
+const dir = path.join(root, 'packages', 'typert-protocol')
 const src = path.join(dir, 'src')
 
 const manifest = {

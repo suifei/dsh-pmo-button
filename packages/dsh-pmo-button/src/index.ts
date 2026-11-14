@@ -1,5 +1,5 @@
 // @ts-nocheck
-// Transitional mechanical migration (P0 step 1). Typing lands with the Remote service extraction.
+// Transitional: strict typing of the legacy host lands with the PmoService wiring (81 errors measured).
 /**
  * PMO button — Host half v0.12.0 (dual-line relay).
  * Per-session armed set, turn buffers, child registry, and the identity-prompt
@@ -30,6 +30,10 @@ import os from 'node:os'
 import path from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
 import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { PmoService } from './service.js'
+import type { PmoBackend } from './service.js'
+
+export { PmoService } from './service.js'
 
 export const name = 'dsh-pmo-button'
 export const inject = ['webServer']
@@ -1057,5 +1061,30 @@ export function apply(ctx, config) {
   } else {
     logger.warn?.('pmo-button: webServer absent — Client 将无法同步开关状态')
   }
+
+  // ---- Remote surface (P0 step 2): typed @Remote methods over the same logic.
+  // The legacy routes remain the single implementation for now; these methods
+  // delegate to them so no review logic is duplicated.
+  const callRoute = async (suffix: string) => (await handle(new Request('http://local' + suffix))).json()
+  const backend: PmoBackend = {
+    state: (sid) => ({
+      sessionId: sid,
+      enabled: enabled.has(sid) && !stopped.has(sid),
+      turns: turnCounts.get(sid) ?? 0,
+    }),
+    toggle: (sid, on) => callRoute(`/pmo-button/toggle?session=${encodeURIComponent(sid)}&enabled=${on ? '1' : '0'}`),
+    config: () => callRoute('/pmo-button/config'),
+    sessionConfig: (sid) => callRoute(`/pmo-button/session-config?session=${encodeURIComponent(sid)}`),
+    setSessionConfig: (sid, patch) => {
+      const q = new URLSearchParams({ session: sid })
+      for (const [key, value] of Object.entries(patch)) {
+        if (value !== undefined) q.set(key, String(value))
+      }
+      return callRoute(`/pmo-button/session-config/set?${q.toString()}`)
+    },
+    models: () => callRoute('/pmo-button/models'),
+    providers: () => ({ providers: (ctx.get('subagents')?.list?.() ?? []) as string[] }),
+  }
+  ctx.plugin(PmoService, backend)
 }
 
