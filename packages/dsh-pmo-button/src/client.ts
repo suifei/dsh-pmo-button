@@ -84,7 +84,9 @@ window.__ModuleLoader__.load({
           const d = event.data ?? {};
           const source = (d.message && d.message.source) || d.source;
           if (!source || source.kind !== REVIEW_SOURCE) return null;
-          return { id: 'pmo-review:' + event.seq, role: 'start', exclusive: true };
+          // No exclusive claim: if this node ever fails to build, the generic
+          // user bubble still shows the verdict, so it can never disappear.
+          return { id: 'pmo-review:' + event.seq, role: 'start' };
         },
         start(_context: ConversationNodeContext, match: any) {
           const text = reviewReportOf(match.event);
@@ -99,13 +101,15 @@ window.__ModuleLoader__.load({
           const anchor = context.start && context.start.event && typeof context.start.event.seq === 'number'
             ? context.start.event.seq
             : 0;
+          const resolved = context.start && context.start.location;
+          const location = resolved && resolved.kind !== 'unresolved' ? resolved : { kind: 'session' };
           return {
             key: context.key,
             kind: 'pmo-review',
             id: context.id,
             target: 'chat',
             anchorSeq: anchor,
-            location: (context.start && context.start.location) || { kind: 'unresolved' },
+            location: location,
             visibility: 'visible',
             data: {
               title: context.state.title,
