@@ -28,8 +28,9 @@ window.__ModuleLoader__.load({
      *  minimal/low/... fallback: without a concrete model the only honest
      *  choice is inherit. Both the session menu and the config panel use this
      *  single builder (qwen: off/low/medium/high; deepseek-flash: off/low/high/max). */
-    function effortChoices(reasoning, current) {
-      const out = [{ value: '', label: t.inheritEffort }];
+    function effortChoices(reasoning, current, tr) {
+      const translate = typeof tr === 'function' ? tr : function (source) { return source; };
+      const out = [{ value: '', label: translate('继承主会话思考等级') }];
       const rows = reasoning && Array.isArray(reasoning.efforts) ? reasoning.efforts : [];
       for (const e of rows) {
         const id = String(e.id || '');
@@ -47,14 +48,59 @@ window.__ModuleLoader__.load({
       return out;
     }
     let loadError = null;
-    let t = {
-      start: 'PMO：启动自动化', stop: 'PMO：运行中，点击停止', busy: 'PMO：处理中…', offline: 'PMO：宿主未响应',
-      menuTitle: '会话级审查设置', menuSub: '只影响当前会话；全局默认在 插件 → PMO 按钮 页面配置；思考等级按所选模型能力列出，模型留空时只能继承。',
-      model: '审查模型', effort: '思考等级', rounds: '轮数上限',
-      inheritModel: '继承主会话模型', inheritEffort: '继承主会话思考等级',
-      roundsHint: '留空 = 继承全局', saved: '已保存 ✓', savedReset: '已保存 ✓（审查官已重置，下次审查使用新模型）', fail: '保存失败',
-      close: '关闭', menuAria: '会话级审查设置',
+    /** English copy keyed by the Chinese source text; a missing key falls back to the source. */
+    const EN_LOCALE = {
+      'PMO：启动自动化': 'Start PMO automation',
+      'PMO：运行中，点击停止': 'PMO running: click to stop',
+      'PMO：处理中…': 'PMO: pending…',
+      'PMO：宿主未响应': 'PMO: host unreachable',
+      '会话级审查设置': 'Session review settings',
+      '只影响当前会话；全局默认在 插件 → PMO 按钮 页面配置；思考等级按所选模型能力列出，模型留空时只能继承。':
+        'Affects this session only. Global defaults live on the plugin page; effort options follow the selected model, and an empty model can only inherit.',
+      '审查模型': 'Review model',
+      '思考等级': 'Reasoning effort',
+      '轮数上限': 'Round cap',
+      '继承主会话模型': 'Inherit the session model',
+      '继承主会话思考等级': 'Inherit the session effort',
+      '留空 = 继承全局': 'Empty = inherit the global cap',
+      '已保存 ✓': 'Saved ✓',
+      '已保存 ✓（审查官已重置，下次审查使用新模型）': 'Saved ✓ (reviewer reset; the next review uses the new model)',
+      '保存失败': 'Save failed',
+      '关闭': 'Close',
+      'PMO 客户端已加载': 'PMO client loaded',
+      'PMO 客户端加载失败': 'PMO client failed to load',
+      'PMO 审查循环 · 在插件详情页配置': 'PMO review loop · configure on the plugin page',
+      '在下方“包含的组件”中点开 PMO 按钮行，即可编辑审查模型与身份提示词。':
+        'Open the PMO button row under “Included components” to edit the review model and identity prompt.',
     };
+    /** Chinese dictionary: the source text is already Chinese. */
+    const ZH_LOCALE = Object.fromEntries(Object.keys(EN_LOCALE).map(function (key) { return [key, key]; }));
+    /** Slot-injected translator with an identity fallback. */
+    function translator(props) {
+      return props && typeof props.t === 'function' ? props.t : function (source) { return source; };
+    }
+    /** Control/menu copy built from the active translator. */
+    function controlText(tr) {
+      return {
+        start: tr('PMO：启动自动化'),
+        stop: tr('PMO：运行中，点击停止'),
+        busy: tr('PMO：处理中…'),
+        offline: tr('PMO：宿主未响应'),
+        menuTitle: tr('会话级审查设置'),
+        menuSub: tr('只影响当前会话；全局默认在 插件 → PMO 按钮 页面配置；思考等级按所选模型能力列出，模型留空时只能继承。'),
+        model: tr('审查模型'),
+        effort: tr('思考等级'),
+        rounds: tr('轮数上限'),
+        inheritModel: tr('继承主会话模型'),
+        inheritEffort: tr('继承主会话思考等级'),
+        roundsHint: tr('留空 = 继承全局'),
+        saved: tr('已保存 ✓'),
+        savedReset: tr('已保存 ✓（审查官已重置，下次审查使用新模型）'),
+        fail: tr('保存失败'),
+        close: tr('关闭'),
+        menuAria: tr('会话级审查设置'),
+      };
+    }
 
     let menuEl = null;
     let menuCleanup = null;
@@ -152,20 +198,6 @@ window.__ModuleLoader__.load({
         + '</svg>';
     }
 
-    function pickDict(localeSvc) {
-      try {
-        const snap = localeSvc && typeof localeSvc.getLocale === 'function' ? localeSvc.getLocale() : null;
-        const id = typeof snap === 'string'
-          ? snap
-          : ((snap && (snap.id || snap.locale)) || (typeof navigator !== 'undefined' ? navigator.language : '') || 'en');
-        return String(id).toLowerCase().indexOf('zh') === 0
-          ? { start: 'PMO：启动自动化', stop: 'PMO：运行中，点击停止', busy: 'PMO：处理中…', offline: 'PMO：宿主未响应' }
-          : { start: 'Start PMO automation', stop: 'PMO running: click to stop', busy: 'PMO: pending…', offline: 'PMO: host unreachable' };
-      } catch (e) {
-        return { start: 'Start PMO automation', stop: 'PMO running: click to stop', busy: 'PMO: pending…', offline: 'PMO: host unreachable' };
-      }
-    }
-
     function sessionIdOf(props) {
       const cands = [
         props ? props.sessionId : void 0,
@@ -200,7 +232,7 @@ window.__ModuleLoader__.load({
       return row;
     }
 
-    function openMenu(anchor, sid, onClose) {
+    function openMenu(anchor, sid, onClose, t) {
       closeMenu();
       const stl = el('style');
       stl.textContent = CSS;
@@ -235,7 +267,7 @@ window.__ModuleLoader__.load({
       function renderEfforts(reasoning, current) {
         const keep = current === undefined ? selE.value : String(current || '');
         while (selE.firstChild) selE.removeChild(selE.firstChild);
-        for (const row of effortChoices(reasoning, keep)) {
+        for (const row of effortChoices(reasoning, keep, t)) {
           const op = el('option', null, row.label);
           op.value = row.value;
           selE.appendChild(op);
@@ -372,6 +404,7 @@ window.__ModuleLoader__.load({
 
     function buildPlugin() {
       function PmoControl(props) {
+        const t = controlText(translator(props));
         try {
           const sid = sessionIdOf(props);
           const state = React.useState({ running: false, turns: 0, online: null, pending: false, err: null });
@@ -430,7 +463,7 @@ window.__ModuleLoader__.load({
             if (menuOpen) { closeMenu(); return; }
             openMenu(wrapRef.current, sid, function () {
               if (aliveRef.current) setMenuOpen(false);
-            });
+            }, t);
             setMenuOpen(true);
           }
 
@@ -472,23 +505,26 @@ window.__ModuleLoader__.load({
         }
       }
 
-      function PmoStrip() {
+      function PmoStrip(props) {
+        const tr = translator(props);
         if (loadError) {
-          return h('div', { className: 'pmo-strip' }, h('span', { className: 'pmo-bad' }), 'PMO ' + VER + ' 异常: ' + loadError);
+          return h('div', { className: 'pmo-strip' }, h('span', { className: 'pmo-bad' }), 'PMO ' + VER + ' ' + tr('PMO 客户端加载失败') + ': ' + loadError);
         }
         const now = new Date().toTimeString().slice(0, 8);
-        return h('div', { className: 'pmo-strip' }, h('span', { className: 'pmo-ok' }), 'PMO ' + VER + ' 已加载 ' + now);
+        return h('div', { className: 'pmo-strip' }, h('span', { className: 'pmo-ok' }), 'PMO ' + VER + ' ' + tr('PMO 客户端已加载') + ' ' + now);
       }
 
       function BundleNote(props) {
+        const tr = translator(props);
         if (props && props.view === 'summary') {
-          return h('span', { className: 'pmo-cfg-note' }, 'PMO 审查循环 · 在组件行配置中编辑');
+          return h('span', { className: 'pmo-cfg-note' }, tr('PMO 审查循环 · 在插件详情页配置'));
         }
         return h('div', { className: 'pmo-cfg' },
-          h('span', { className: 'pmo-cfg-note' }, '在下方“包含的组件”中点开 PMO 按钮行，即可编辑审查模型与身份提示词。'));
+          h('span', { className: 'pmo-cfg-note' }, tr('在下方“包含的组件”中点开 PMO 按钮行，即可编辑审查模型与身份提示词。')));
       }
 
       function ConfigPanel(props) {
+        const tr = translator(props);
         const form = props && props.form;
         const snapshot = form && form.state;
         const values = (snapshot && snapshot.value) || {};
@@ -614,7 +650,7 @@ window.__ModuleLoader__.load({
         }
         function effortField() {
           const value = values.childReasoningEffort ? String(values.childReasoningEffort) : '';
-          const opts = effortChoices(view.reasoning, value).map(function (row) {
+          const opts = effortChoices(view.reasoning, value, tr).map(function (row) {
             return h('option', { value: row.value, key: row.value || 'inherit' }, row.label);
           });
           return h('label', { className: 'pmo-cfg-row', key: 'childReasoningEffort' },
@@ -674,7 +710,7 @@ window.__ModuleLoader__.load({
             window.__PMO_REMOTE_MOUNTED__ = true;
             window.__PMO_REMOTE_DISPOSE__ = dispose;
             c.plugin({
-              inject: ['slots', 'remote.pmo'],
+              inject: ['slots', 'remote.pmo', 'locale'],
               apply: applyChild,
             });
           }).catch(function (err) {
@@ -703,30 +739,37 @@ window.__ModuleLoader__.load({
             models: function () { return call(function (pmo) { return pmo.models(); }); },
             providers: function () { return call(function (pmo) { return pmo.providers(); }); },
           };
-          // Merge, never replace: pickDict only carries the four runtime
-          // strings, and replacing `t` blanked the menu title/labels.
-          t = Object.assign({}, t, pickDict(c.get ? c.get('locale') : null));
+          // Locale namespace: English copy keyed by the Chinese source; zh falls
+          // back to the source text, so the dictionary stays single-sourced.
+          const localeSvc = c.locale;
+          if (localeSvc && typeof localeSvc.register === 'function') {
+            c.effect(function () {
+              return localeSvc.register('pmoButton', { zh: ZH_LOCALE, en: EN_LOCALE });
+            });
+            // Test hook: lets the E2E switch the UI locale and assert re-render.
+            window.__PMO_SET_LOCALE__ = function (id) { localeSvc.setLocale(id); };
+          }
           c.slots.inject('plugins.bundle.config', function () {
             return c.slots.register(
-              { name: 'plugins.bundle.config', key: BUNDLE_NAME },
+              { name: 'plugins.bundle.config', key: BUNDLE_NAME, locale: 'pmoButton' },
               BundleNote,
             );
           });
           c.slots.inject('plugins.row.config', function () {
             return c.slots.register(
-              { name: 'plugins.row.config', key: BUNDLE_NAME + '#' + ROW_ID },
+              { name: 'plugins.row.config', key: BUNDLE_NAME + '#' + ROW_ID, locale: 'pmoButton' },
               ConfigPanel,
             );
           });
           c.slots.inject('conversation.composer.dock', function () {
             return c.slots.register(
-              { name: 'conversation.composer.dock', id: 'pmo-button-strip', order: 90 },
+              { name: 'conversation.composer.dock', id: 'pmo-button-strip', order: 90, locale: 'pmoButton' },
               PmoStrip,
             );
           });
           c.slots.inject('conversation.input.right', function () {
             return c.slots.register(
-              { name: 'conversation.input.right', id: 'pmo-button', order: 10 },
+              { name: 'conversation.input.right', id: 'pmo-button', order: 10, locale: 'pmoButton' },
               PmoControl,
             );
           });
