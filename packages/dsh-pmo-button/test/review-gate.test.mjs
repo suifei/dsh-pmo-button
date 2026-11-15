@@ -750,3 +750,62 @@ test('storage hydration replaces the legacy file instead of merging into it', as
   const body = await res.json()
   assert.equal(body.enabled, false, '域里已停用的会话不能被旧文件复活')
 })
+
+// ---- cross-turn contamination (2026-11-15 incident, turn 118 leaked into 119) ----
+
+test('a buffer restored from another turn is dropped, never forwarded', async (t) => {
+  const stale = {
+    version: 10,
+    enabled: [SID],
+    turnCounts: {},
+    // hydrateDoc restores this after a reload that landed mid-turn: the open turn
+    // never emitted turn/start, so this buffer would otherwise be forwarded as the
+    // next turn's material.
+    buffers: {
+      [SID]: {
+        turn: 118,
+        tasks: [{ src: 'user', text: '上一轮的用户原话：A,我已做，B，修它' }],
+        texts: ['上一轮的主代理答复'],
+        usage: { input: 1, output: 1 },
+      },
+    },
+    children: {},
+    roleSent: {},
+    childReports: {},
+    doneSet: {},
+    stopped: {},
+    overrides: {},
+    modelFps: {},
+    lastForwardReview: {},
+    rounds: {},
+  }
+  const h = harness(stale, {})
+  t.after(() => h.cleanup())
+  await h.wait(60)
+
+  // The open turn 119 ends without a turn/start (exactly the reload shape).
+  h.userMsg('本轮真正的新指令')
+  h.turnEnd(119)
+  await h.wait(150)
+
+  const log = h.logText()
+  assert.match(log, /丢弃陈旧缓冲 turn=118≠119/, '必须留下丢弃日志')
+  const forwarded = h.forwards().map((s) => s.text).join('\n')
+  assert.doesNotMatch(forwarded, /A,我已做，B，修它/, '上一轮的用户原话不能出现在本轮转发里')
+  assert.doesNotMatch(forwarded, /上一轮的主代理答复/, '上一轮的答复也不能出现')
+})
+
+test('a normal turn still forwards its own content after the guard', async (t) => {
+  const h = harness(null, {})
+  t.after(() => h.cleanup())
+  await h.toggle(true)
+  h.turnStart(1)
+  h.userMsg('本轮任务')
+  h.assistantMsg('本轮答复')
+  h.turnEnd(1)
+  await h.wait(200)
+  const forwarded = h.forwards().map((s) => s.text).join('\n')
+  assert.match(forwarded, /本轮任务/)
+  assert.match(forwarded, /本轮答复/)
+  assert.doesNotMatch(h.logText(), /丢弃陈旧缓冲/)
+})
