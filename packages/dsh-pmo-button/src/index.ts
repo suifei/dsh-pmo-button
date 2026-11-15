@@ -94,7 +94,9 @@ const STATUS_LINE = /^[\s*#>`]*STATUS[\s*]*[:：][\s*`]*(CONTINUE|DONE|NEED_HUMA
 /** @typedef {{ logFile: string, maxChars: number, provider: string, childLabel: string, greet: string, rolePrompt: string }} Config */
 export const Config = Schema.object({
   /** Deterministic default: ~/.dsh/logs/pmo-button.log (cwd-relative defaults break on restarts). */
-  logFile: Schema.string().default(path.join(os.homedir(), '.dsh', 'logs', 'pmo-button.log')).volatile(),
+  // Follow DSH_HOME: a profile-scoped or test instance must never read or write the
+  // real user's log and state (issue #13).
+  logFile: Schema.string().default(path.join(process.env.DSH_HOME?.trim() || path.join(os.homedir(), '.dsh'), 'logs', 'pmo-button.log')).volatile(),
   maxChars: Schema.number().default(4000).volatile(),
   /** Subagent provider name registered on ctx.subagents (spawn-in-process default). */
   provider: Schema.string().default('spawn').volatile(),
