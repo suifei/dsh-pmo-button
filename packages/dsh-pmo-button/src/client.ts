@@ -14,6 +14,7 @@
  * Everything talks to the package-private /pmo-button/* same-origin routes.
  */
 import contribution from '../lib/typert.remote-client.js'
+import { effortPatch, modelPatch, roundsPatch } from './session-patch.js'
 import type { ChatNodeViewProps } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type {
   ConversationNodeContext,
@@ -84,9 +85,9 @@ window.__ModuleLoader__.load({
           const d = event.data ?? {};
           const source = (d.message && d.message.source) || d.source;
           if (!source || source.kind !== REVIEW_SOURCE) return null;
-          // No exclusive claim: if this node ever fails to build, the generic
-          // user bubble still shows the verdict, so it can never disappear.
-          return { id: 'pmo-review:' + event.seq, role: 'start' };
+          // Claim the message exclusively: this Definition owns the verdict's
+          // rendering, and the generic user bubble must not duplicate it.
+          return { id: 'pmo-review:' + event.seq, role: 'start', exclusive: true };
         },
         start(_context: ConversationNodeContext, match: any) {
           const text = reviewReportOf(match.event);
@@ -97,7 +98,10 @@ window.__ModuleLoader__.load({
         },
         update(context: any) { return context.state; },
         buildViewNode(context: any) {
-          if (!context || context.state === undefined) return null;
+          // Once a target node is published it must keep returning one; a
+          // temporary absence uses visibility, never null (contract).
+          if (!context) return null;
+          const state = context.state ?? { title: 'PMO 审查 · STATUS=UNKNOWN', status: 'UNKNOWN', summary: '' };
           const anchor = context.start && context.start.event && typeof context.start.event.seq === 'number'
             ? context.start.event.seq
             : 0;
@@ -112,9 +116,9 @@ window.__ModuleLoader__.load({
             location: location,
             visibility: 'visible',
             data: {
-              title: context.state.title,
-              status: context.state.status,
-              summary: context.state.summary,
+              title: state.title,
+              status: state.status,
+              summary: state.summary,
             },
           };
         },
@@ -130,7 +134,7 @@ window.__ModuleLoader__.load({
     }
 
     const BASE = '/pmo-button';
-    const VER = 'v0.13.0';
+    const VER = 'v0.13.1';
     /** Effort choices from the model's DSH reasoning catalog. No hardcoded
      *  minimal/low/... fallback: without a concrete model the only honest
      *  choice is inherit. Both the session menu and the config panel use this
@@ -444,15 +448,11 @@ window.__ModuleLoader__.load({
       });
 
       let wantCombo = '';
-      function persist() {
-        const mv = selM.value;
-        const i = mv.indexOf('|');
-        const patch = {
-          provider: i >= 0 ? mv.slice(0, i) : '',
-          model: i >= 0 ? mv.slice(i + 1) : '',
-          effort: selE.value,
-          maxRounds: inR.value.trim() === '' ? undefined : Number(inR.value.trim()),
-        };
+      /** Send only the fields this control owns: a rounds edit must never carry an
+       *  empty provider/model pair (the catalog may still be loading) and so wipe a
+       *  model override (issue #5); an empty rounds box means "inherit", not "keep
+       *  the old value" (issue #4). */
+      function persist(patch: any) {
         status.textContent = tr('保存中…');
         status.style.color = '';
         api.setSessionConfig(sid, patch)
@@ -475,9 +475,9 @@ window.__ModuleLoader__.load({
             status.style.color = 'var(--dsw-alias-state-error-primary,#e5484d)';
           });
       }
-      selM.addEventListener('change', persist);
-      selE.addEventListener('change', persist);
-      inR.addEventListener('change', persist);
+      selM.addEventListener('change', function () { persist(modelPatch(selM.value)); });
+      selE.addEventListener('change', function () { persist(effortPatch(selE.value)); });
+      inR.addEventListener('change', function () { persist(roundsPatch(inR.value)); });
 
       api.config()
         .then(function (body: any) {
@@ -806,7 +806,9 @@ window.__ModuleLoader__.load({
         }
         function providerField() {
           const value = values.provider ? String(values.provider) : 'spawn';
-          const list = (view.providers && view.providers.length) ? view.providers.slice() : ['spawn', 'fork'];
+          // No phantom options: when the host could not enumerate providers, offer only
+          // the documented default plus whatever value is already configured (issue #8).
+          const list = (view.providers && view.providers.length) ? view.providers.slice() : ['spawn'];
           if (list.indexOf(value) === -1) list.push(value);
           return h('label', { className: 'pmo-cfg-row', key: 'provider' },
             h('span', { className: 'pmo-cfg-label' }, tr('子代理提供方')),

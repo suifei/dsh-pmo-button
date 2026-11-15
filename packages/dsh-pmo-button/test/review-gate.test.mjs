@@ -31,9 +31,11 @@ function harness(state, opts = {}) {
   const followups = []
   let route
   const agent = { id: SID, followup: (m) => followups.push(m) }
-  const subagents = {
+  const subagents = opts.subagents || {
     list: () => ['spawn'],
     sendMessage: async (sender, targetId, content) => {
+      // A test may own delivery (issue #2: transient failures).
+      if (typeof opts.sendMessage === 'function') return opts.sendMessage(sender, targetId, content, sent)
       sent.push({ targetId: String(targetId), text: content.map((c) => c.text).join('\n') })
       return 'msg-test'
     },
@@ -51,6 +53,7 @@ function harness(state, opts = {}) {
       llm: opts.llm,
       agentDefaultModel: undefined,
       configEditor: undefined,
+      storageDomain: opts.storage,
     }[name]),
     logger: () => ({ warn: () => {}, info: () => {}, debug: () => {} }),
     effect: (fn) => { fn(); return () => {} },
@@ -132,11 +135,13 @@ function harness(state, opts = {}) {
     turnEnd(turn)
     await new Promise((r) => setTimeout(r, 150))
   }
+  /** Emit one event on the child session (step-level control for issue #6). */
+  const childEvent = (ev) => emitTo(CHILD, ev)
   const forwards = () => sent.filter((s) => s.text.startsWith('【PMO 轮次转发'))
   const logText = () => fs.readFileSync(logFile, 'utf8')
   const wait = (ms = 30) => new Promise((r) => setTimeout(r, ms))
   const cleanup = () => fs.rmSync(dir, { recursive: true, force: true })
-  return { dir, sent, activated, followups, childTurn, commitVerdict, native, preStep, toggle, ensureChild, forwards, logText, wait, cleanup, turnStart, turnEnd, userMsg, assistantMsg, settlement, imageMsg, route, emit }
+  return { dir, sent, activated, followups, childEvent, childTurn, commitVerdict, native, preStep, toggle, ensureChild, forwards, logText, wait, cleanup, turnStart, turnEnd, userMsg, assistantMsg, settlement, imageMsg, route, emit }
 }
 
 test('request/header reads effort from data.header.config.reasoningEffort', async (t) => {
@@ -546,4 +551,202 @@ test('session model/effort change resets the reviewer immediately and uses the m
   const got = await (await h.route(new Request(`http://x/pmo-button/session-config?session=${SID}`))).json()
   assert.equal(got.override.provider, 'qwen')
   assert.deepEqual(got.reasoning.efforts.map((e) => e.id), ['off', 'low', 'medium', 'high'])
+})
+
+// ---- issue #2: a failed forward must never drop the round or stall the loop ----
+
+test('a transient send failure is retried and the round still reaches the reviewer', async (t) => {
+  let attempts = 0
+  const delivered = []
+  const h = harness(null, {
+    sendMessage: async (_sender, targetId, content) => {
+      attempts += 1
+      if (attempts <= 2) throw Object.assign(new Error('cold resume busy'), { code: 'NOT_RESUMABLE' })
+      delivered.push(content.map((c) => c.text).join('\n'))
+      return 'msg-retry'
+    },
+  })
+  t.after(() => h.cleanup())
+  await h.toggle(true)
+  h.turnStart(1)
+  h.userMsg('第一轮任务')
+  h.assistantMsg('第一轮答复')
+  h.turnEnd(1)
+  await h.wait(1500)
+
+  assert.equal(attempts, 3, '两次瞬时失败后应重试成功')
+  assert.equal(delivered.length, 1)
+  assert.match(delivered[0], /第一轮任务/)
+  assert.match(h.logText(), /已送达 child=.*重试 2 次/)
+})
+
+test('a persistent send failure keeps the ticket and rides on the next forward', async (t) => {
+  let fail = true
+  const delivered = []
+  const h = harness(null, {
+    sendMessage: async (_sender, targetId, content) => {
+      const text = content.map((c) => c.text).join('\n')
+      if (fail) throw Object.assign(new Error('parent agent unavailable'), { code: 'E_UNAVAILABLE' })
+      delivered.push(text)
+      return 'msg-late'
+    },
+  })
+  t.after(() => h.cleanup())
+  await h.toggle(true)
+  h.turnStart(1)
+  h.userMsg('第一轮任务')
+  h.assistantMsg('第一轮答复')
+  h.turnEnd(1)
+  await h.wait(1600)
+
+  assert.match(h.logText(), /失败\(已重试 3 次\)/, '永久失败要有明确日志')
+  assert.equal(delivered.length, 0)
+
+  // The ticket must be back: the next user turn is forwarded (no "无票" skip) and
+  // the lost round rides along with it.
+  fail = false
+  h.turnStart(2)
+  h.userMsg('第二轮任务')
+  h.assistantMsg('第二轮答复')
+  h.turnEnd(2)
+  await h.wait(400)
+
+  assert.match(h.logText(), /含补发/, '补发要落日志')
+  assert.equal(delivered.length, 1)
+  assert.match(delivered[0], /第一轮任务/, '上一轮内容不能丢')
+  assert.match(delivered[0], /第二轮任务/)
+})
+
+// ---- issue #3: the round cap must never authorise unreviewed work ----
+
+test('the last allowed round closes the loop instead of authorising more work', async (t) => {
+  const h = harness(null, {})
+  t.after(() => h.cleanup())
+  await h.toggle(true)
+  // maxRounds = 1 for this session.
+  await h.route(new Request(`http://x/pmo-button/session-config/set?session=${SID}&maxRounds=1`))
+  h.turnStart(1)
+  h.userMsg('唯一允许的一轮')
+  h.assistantMsg('答复')
+  h.turnEnd(1)
+  await h.wait(300)
+  assert.equal(h.forwards().length, 1, '第一轮被转发')
+
+  // The reviewer answers CONTINUE, which would otherwise grant one more round.
+  h.childTurn('STATUS: CONTINUE\n下一步：继续改代码')
+  await h.wait(200)
+
+  const verdict = h.followups.at(-1)
+  assert.ok(verdict, '判定要送达主会话')
+  const text = verdict.content.map((c) => c.text).join('\n')
+  assert.match(text, /STATUS=NEED_HUMAN/, '达上限后的 CONTINUE 必须收口')
+  assert.match(text, /已达本轮审查上限/)
+  assert.doesNotMatch(text, /代表用户授权/, '不能再授权无人复核的工作')
+
+  // And the loop really is stopped: a following turn is not forwarded.
+  h.turnStart(2)
+  h.assistantMsg('主代理继续干活')
+  h.turnEnd(2)
+  await h.wait(200)
+  assert.equal(h.forwards().length, 1, '收口后不再转发')
+})
+// ---- issue #6: judge only the closing step's text ----
+
+test('a final step without text is judged as "no protocol output", not by the earlier STATUS', async (t) => {
+  const h = harness(null, {})
+  t.after(() => h.cleanup())
+  await h.toggle(true)
+  h.turnStart(1)
+  h.userMsg('做一件事')
+  h.assistantMsg('主代理答复')
+  h.turnEnd(1)
+  await h.wait(200)
+
+  // Step 1 speaks a CONTINUE; the final step (2) only calls tools (no text).
+  h.childEvent({ type: 'turn/start', data: { turn: 1 } })
+  h.childEvent({ type: 'step/start', data: { turn: 1, step: 1 } })
+  h.childEvent({
+    type: 'assistant/message',
+    data: { turn: 1, step: 1, message: { role: 'assistant', content: [{ type: 'text', text: 'STATUS: CONTINUE\n下一步：继续改' }], source: { kind: 'model', provider: 'p', model: 'm' } } },
+  })
+  h.childEvent({ type: 'step/start', data: { turn: 1, step: 2 } })
+  h.childEvent({ type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+  await h.wait(200)
+
+  const verdict = h.followups.at(-1)
+  assert.ok(verdict, '判定仍要送达（不能静默）')
+  const text = verdict.content.map((c) => c.text).join('\n')
+  assert.match(text, /STATUS=NEED_HUMAN/, '最后一步无文本 → 不能沿用上一步的 CONTINUE')
+  assert.match(text, /未按协议输出/)
+})
+// ---- issue #9: credentials never reach the log or the child ----
+
+test('credential-shaped strings are redacted before they reach the log', async (t) => {
+  const h = harness(null, {})
+  t.after(() => h.cleanup())
+  await h.toggle(true)
+  h.turnStart(1)
+  h.userMsg('这是我的 key sk-abcdef0123456789abcdef 和 ghp_0123456789abcdefXYZ')
+  h.assistantMsg('收到')
+  h.turnEnd(1)
+  await h.wait(200)
+
+  const log = h.logText()
+  assert.doesNotMatch(log, /sk-abcdef0123456789abcdef/, 'sk- 凭据必须脱敏')
+  assert.doesNotMatch(log, /ghp_0123456789abcdefXYZ/, 'ghp_ 凭据必须脱敏')
+  assert.match(log, /已脱敏/)
+})
+
+// ---- issue #8: providers come from a real probe when list() is gone ----
+
+test('without subagents.list() the provider list is probed, not empty', async (t) => {
+  const known = new Set(['spawn'])
+  const h = harness(null, {
+    subagents: {
+      getProvider: (name) => (known.has(name) ? { name } : undefined),
+      sendMessage: async () => 'msg',
+      startActivation: async () => ({ childId: 'child-test', result: Promise.resolve({}), dispose: async () => {} }),
+    },
+  })
+  t.after(() => h.cleanup())
+  const res = await h.route(new Request('http://x/pmo-button/providers'))
+  const body = await res.json()
+  assert.deepEqual(body.providers, ['spawn'], '不能给出宿主编排里不存在的 provider')
+})
+
+// ---- issue #10: the model catalog is fetched in parallel ----
+
+test('the model catalog queries providers concurrently', async (t) => {
+  const llm = {
+    listProviders: () => ['p1', 'p2', 'p3'].map((id) => ({ id, name: id.toUpperCase() })),
+    listModels: async (id) => {
+      await new Promise((r) => setTimeout(r, 120))
+      return [{ id: id + '-m', name: id + '-M' }]
+    },
+  }
+  const h = harness(null, { llm })
+  t.after(() => h.cleanup())
+  const started = Date.now()
+  const res = await h.route(new Request('http://x/pmo-button/models'))
+  const elapsed = Date.now() - started
+  const body = await res.json()
+  assert.equal(body.providers.length, 3)
+  assert.ok(elapsed < 300, `并发拉取应快于串行的 360ms，实测 ${elapsed}ms`)
+})
+
+// ---- issue #11: the storage domain replaces the legacy file, never merges ----
+
+test('storage hydration replaces the legacy file instead of merging into it', async (t) => {
+  const legacy = { version: 10, enabled: [SID], turnCounts: {}, buffers: {}, children: {}, roleSent: {}, childReports: {}, doneSet: {}, stopped: {}, overrides: {}, modelFps: {}, lastForwardReview: {}, rounds: {} }
+  const stored = { ...legacy, enabled: [] }
+  const domain = {
+    open: async () => ({ global: { get: () => stored, set: async () => {} }, close: async () => {} }),
+  }
+  const h = harness(legacy, { storage: domain })
+  t.after(() => h.cleanup())
+  await h.wait(120)
+
+  const res = await h.route(new Request(`http://x/pmo-button/state?session=${SID}`))
+  const body = await res.json()
+  assert.equal(body.enabled, false, '域里已停用的会话不能被旧文件复活')
 })

@@ -50,7 +50,7 @@ export { PmoService } from './service.js'
 export const name = 'dsh-pmo-button'
 /** Host-half version, logged on activation so an operator can tell which build
  *  the running Host actually imported (hot reload vs stale module). */
-const HOST_VERSION = '0.13.0'
+const HOST_VERSION = '0.13.1'
 
 /** The identity prompt; delivered once per session and re-delivered only when its text changes. */
 const ROLE_PROMPT_DEFAULT = [
@@ -192,6 +192,10 @@ export function apply(ctx: any, config: any) {
   const roleSent = new Map<string, string>()
   /** childId -> closing text of the child's open turn (line B capture) */
   const childReports = new Map<string, string>()
+  /** childId -> step the captured closing text belongs to (issue #6). */
+  const childReportStep = new Map<string, number>()
+  /** childId -> newest step the child started. */
+  const childStep = new Map<string, number>()
   /** sid -> native dsh notices dropped by the pre-step gate in the open turn */
   const gateDrops = new Map<string, number>()
   /** sid -> true: the child returned STATUS=DONE — forward gate until user speech or restart */
@@ -212,6 +216,13 @@ export function apply(ctx: any, config: any) {
   const forwardAllowed = new Map<string, boolean>()
   /** sid -> review rounds forwarded since the last user input (maxRounds cap) */
   const rounds = new Map<string, number>()
+  /** sid -> the round cap was reached: the next verdict must close the loop instead of
+   *  asking the main agent to keep working without a reviewer (issue #3). */
+  const capReached = new Set<string>()
+  /** sid -> a composed forward whose delivery failed for good: its ticket is
+   *  restored and the text rides on the next forward, so a transient send error
+   *  can never drop a whole review round (issue #2). */
+  const pendingForward = new Map<string, string>()
   /** 'provider/model' -> display label (resolved via ctx.llm.listModels) */
   const labelCache = new Map<string, string | undefined>()
 
@@ -225,7 +236,26 @@ export function apply(ctx: any, config: any) {
 
   // ---- persisted state (armed set, counters, in-flight buffers) -----------
   /** Hydrate the in-memory maps from one state document (legacy file or domain). */
-  function hydrateDoc(parsed: any) {
+  function hydrateDoc(parsed: any, options: any = {}) {
+    if (options.replace === true) {
+      // The storage domain is the source of truth once it opens: merging its
+      // document into the legacy-file hydration could resurrect a session that was
+      // disarmed in one of the two (issue #11).
+      enabled = new Set<string>()
+      buffers.clear()
+      turnCounts.clear()
+      children.clear()
+      roleSent.clear()
+      childReports.clear()
+      doneSet.clear()
+      stopped.clear()
+      capReached.clear()
+      overrides.clear()
+      modelFps.clear()
+      lastForwardReview.clear()
+      rounds.clear()
+      pendingForward.clear()
+    }
     if (Array.isArray(parsed?.enabled)) enabled = new Set(parsed.enabled.map(String))
     if (parsed?.turnCounts && typeof parsed.turnCounts === 'object') {
       for (const [k, v] of Object.entries(parsed.turnCounts)) turnCounts.set(k, Number(v) || 0)
@@ -284,7 +314,12 @@ export function apply(ctx: any, config: any) {
   /** Set once the typed storage domain opens; then it owns persistence. */
   let stateDomain: any = null
 
-  function saveState() {
+  /** Pending debounce timer for state writes (issue #7: every event used to
+   *  serialise the whole document, including every session's live turn buffer). */
+  let saveTimer: any = null
+  let saveQueued = false
+  /** Write the state document right now. */
+  function saveStateNow() {
     const kept: Record<string, any> = {}
     for (const [sid, b] of buffers) if (enabled.has(sid)) kept[sid] = b
     const doc = {
@@ -316,6 +351,35 @@ export function apply(ctx: any, config: any) {
     } catch (err: any) { logger.warn?.(`pmo-button: state save failed: ${err}`) }
   }
 
+  /**
+   * Coalesce state writes: events arrive in bursts (per step), while the document
+   * carries every session's buffer. Turn boundaries, toggles and config edits pass
+   * `{ immediate: true }` so the durable copy is never behind a user-visible action.
+   */
+  function saveState(options: any = {}) {
+    if (options && options.immediate === true) {
+      if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+      saveQueued = false
+      saveStateNow()
+      return
+    }
+    saveQueued = true
+    if (saveTimer) return
+    saveTimer = setTimeout(() => {
+      saveTimer = null
+      if (!saveQueued) return
+      saveQueued = false
+      saveStateNow()
+    }, 150)
+  }
+  /** Flush a queued write when the plugin goes away (hot reload / shutdown). */
+  if (typeof ctx.effect === 'function') {
+    ctx.effect(() => () => {
+      if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+      if (saveQueued) { saveQueued = false; saveStateNow() }
+    })
+  }
+
   // ---- typed storage domain (state) ---------------------------------------
   /** Hand state persistence to the storage domain once it is available. */
   function startStorage(storage: any) {
@@ -327,7 +391,7 @@ export function apply(ctx: any, config: any) {
         stateDomain = d
         const stored = d.global.get()
         if (stored && Number(stored.version) >= 1) {
-          hydrateDoc(stored)
+          hydrateDoc(stored, { replace: true })
           append(`${stamp()}  [storage] 水合 ${enabled.size} 个会话\n`)
         } else {
           // First domain write: persist the legacy file contents once.
@@ -365,8 +429,19 @@ export function apply(ctx: any, config: any) {
   }
   /** Never let credential-looking strings (npm_ tokens etc.) reach the log,
    *  the review forward, or the child's durable session. */
+  const REDACT_RULES: Array<[RegExp, string]> = [
+    [/npm_[A-Za-z0-9]{20,}/g, 'npm_***已脱敏***'],
+    [/sk-[A-Za-z0-9_\-]{16,}/g, 'sk-***已脱敏***'],
+    [/gh[pousr]_[A-Za-z0-9]{16,}/g, 'gh_***已脱敏***'],
+    [/AKIA[0-9A-Z]{16}/g, 'AKIA***已脱敏***'],
+    [/xox[baprs]-[A-Za-z0-9-]{10,}/g, 'xox-***已脱敏***'],
+    [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '***私钥已脱敏***'],
+    [/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, '***JWT已脱敏***'],
+  ]
   function redact(s: any) {
-    return String(s ?? '').replace(/npm_[A-Za-z0-9]{20,}/g, 'npm_***已脱敏***')
+    let out = String(s ?? '')
+    for (const [re, replacement] of REDACT_RULES) out = out.replace(re, replacement)
+    return out
   }
   /** Per-injection cap: a settlement notice or a skill-catalog snapshot is
    *  optional context, never the review target. */
@@ -548,6 +623,7 @@ export function apply(ctx: any, config: any) {
         doneSet.delete(sid)
         stopped.delete(sid)
         rounds.delete(sid)
+        capReached.delete(sid)
         saveState()
         append(`${stamp()}  [轮次转发] DONE 闸门解除：检测到用户输入，循环恢复\n`)
       }
@@ -626,9 +702,26 @@ export function apply(ctx: any, config: any) {
           append(`${stamp()}  [轮次转发] turn=${turn} 跳过：父会话无活跃 Agent 或 subagents 不可用\n`)
         } else {
           const effMax = effectiveFor(sid).maxRounds
-          forwardAllowed.delete(sid) // consumed: the next forward needs a fresh user turn or CONTINUE
+          const pending = pendingForward.get(sid)
+          // A forward left over from a failed delivery rides along: its ticket was
+          // restored, so this turn is the retry. Nothing is dropped (issue #2).
+          const outgoing = pending ? `${pending}\n\n${forward}` : forward
           const send = (target: any) => Promise.resolve(subagentsSvc.sendMessage(
-            agent, target, [{ type: 'text', text: forward }], { signal: new AbortController().signal }))
+            agent, target, [{ type: 'text', text: outgoing }], { signal: new AbortController().signal }))
+          // Transient failures (a cold resume that still holds the child's write
+          // lease, a briefly unavailable host) deserve a retry before the round is
+          // declared lost: two extra attempts, ~1.2s apart in total.
+          const deliver = async (target: any) => {
+            let lastErr: any
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try { await send(target); return attempt } catch (err: any) {
+                lastErr = err
+                if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 300 * attempt))
+              }
+            }
+            throw lastErr
+          }
+          forwardAllowed.delete(sid) // consumed: the next forward needs a fresh user turn or CONTINUE
           // P1-7: the child is created (and greeted) on the first forward after
           // arming, not on toggle; later forwards reuse it without another greet.
           const prepare = greeted.has(sid)
@@ -638,26 +731,39 @@ export function apply(ctx: any, config: any) {
             const target = children.get(sid)
             if (!target) throw new Error('子代理创建后仍无 id')
             lastForwardReview.set(sid, true)
-            return send(target)
+            return deliver(target)
           })
           run
-            .then(() => {
+            .then((attempts: any) => {
+              pendingForward.delete(sid)
               const target = children.get(sid) ?? childId
               const n = (rounds.get(sid) ?? 0) + 1
               rounds.set(sid, n)
               saveState()
-              append(`${stamp()}  [轮次转发] turn=${turn} 已送达 child=${String(target).slice(0, 12)}…（第 ${n}${effMax > 0 ? '/' + effMax : ''} 轮审查）\n`)
-              if (effMax > 0 && n >= effMax) extinguish(sid, `达到最大审查轮数 ${effMax}`)
+              append(`${stamp()}  [轮次转发] turn=${turn} 已送达 child=${String(target).slice(0, 12)}…（第 ${n}${effMax > 0 ? '/' + effMax : ''} 轮审查${attempts > 1 ? `，重试 ${attempts - 1} 次` : ''}${pending ? '，含补发' : ''}）\n`)
+              if (effMax > 0 && n >= effMax) {
+                // Do NOT extinguish yet: this round's verdict has not arrived. If it
+                // is CONTINUE, deliverVerdict turns it into a stop, so the main agent
+                // is never told to continue work nobody will review (issue #3).
+                capReached.add(sid)
+                append(`${stamp()}  [轮次上限] 已达 ${effMax} 轮；本轮判定返回后收口（再由用户决定是否继续）\n`)
+              }
             })
             .catch((err: any) => {
               lastForwardReview.set(sid, false)
-              append(`${stamp()}  [轮次转发] turn=${turn} 失败: ${errText(err)}\n`)
+              // Restore the ticket AND keep the composed text: the next turn (which
+              // the restored ticket lets through) carries it, so a persistent send
+              // failure degrades to "review arrives one turn late", never "lost".
+              pendingForward.set(sid, outgoing.slice(0, Math.max(4000, cfg.maxChars * 2)))
+              forwardAllowed.set(sid, true)
+              saveState({ immediate: true })
+              append(`${stamp()}  [轮次转发] turn=${turn} 失败(已重试 3 次): ${errText(err)}；已还票并在下一轮补发\n`)
             })
         }
       }
     }
     buffers.set(sid, emptyBuffer())
-    saveState()
+    saveState({ immediate: true })
   }
 
   function logGoalChange(sid: any, event: any) {
@@ -749,39 +855,59 @@ export function apply(ctx: any, config: any) {
   // fall through unknown kinds), so the main-session listener never mistakes a
   // verdict for user speech.
   function deliverVerdict(sid: any, childId: any, status: any, report: any) {
-    const head = status === 'CONTINUE'
+    // Round cap reached and the reviewer still says CONTINUE: honouring it would ask
+    // the main agent to keep working while this loop is done reviewing (issue #3),
+    // so the verdict is delivered as a stop instead of a continue.
+    let effective = status
+    let body = report
+    if (status === 'CONTINUE' && capReached.has(sid)) {
+      effective = 'NEED_HUMAN'
+      body = `已达本轮审查上限（${effectiveFor(sid).maxRounds} 轮），自动循环到此为止；下面的意见来自最后一轮，如需继续请用户明确指示。\n\n${report}`
+      append(`${stamp()}  [轮次上限] CONTINUE 判定改为收口交付（不再授权新一轮无人复核的工作）\n`)
+    }
+    const head = effective === 'CONTINUE'
       ? `【PMO 审查 · STATUS=CONTINUE】以下是常驻 PMO 审查官对你上一轮工作的审查意见，代表用户授权：请按其"下一步"执行；不同意时说明理由并停下，不要自行改写目标。`
-      : status === 'DONE'
+      : effective === 'DONE'
         ? `【PMO 审查 · STATUS=DONE】审查官确认目标已达成，自动循环已停止。请只用一两句话向用户收尾，不要继续修改或开始新工作。`
         : `【PMO 审查 · STATUS=NEED_HUMAN】自动循环已停止，等待用户决定。请把下面审查官提出的待决事项原样转达给用户，然后停下，不要替用户做决定。`
     // Anything other than CONTINUE closes the forward gate BEFORE the main
     // session is woken, so its wrap-up turn is logged but never forwarded.
     // A CONTINUE verdict grants exactly one more forward (the ticket).
-    if (status !== 'CONTINUE') extinguish(sid, `STATUS=${status}（循环停转）`)
+    if (effective !== 'CONTINUE') extinguish(sid, `STATUS=${effective}（循环停转）`)
     else forwardAllowed.set(sid, true)
     const agents = ctx.get('agents')
     const agent = agents && typeof agents.get === 'function' ? agents.get(sid) : undefined
     if (!agent || typeof agent.followup !== 'function') {
-      if (status === 'CONTINUE') extinguish(sid, '主会话无活跃 Agent，审查意见未送达')
-      else append(`${stamp()}  [线路B] 主会话无活跃 Agent，STATUS=${status} 未送达（见上方子代理报告）\n`)
+      if (effective === 'CONTINUE') extinguish(sid, '主会话无活跃 Agent，审查意见未送达')
+      else append(`${stamp()}  [线路B] 主会话无活跃 Agent，STATUS=${effective} 未送达（见上方子代理报告）\n`)
       return
     }
     agent.followup(createUserMessage({
-      content: [{ type: 'text', text: `${head}\n\n${report}` }],
+      content: [{ type: 'text', text: `${head}\n\n${body}` }],
       source: {
         kind: REVIEW_SOURCE_KIND,
         form: 'notice',
-        summary: boundContextSummary(`PMO 审查 STATUS=${status}`),
+        summary: boundContextSummary(`PMO 审查 STATUS=${effective}`),
         senderSessionId: childId,
       },
     }))
-    append(`${stamp()}  [线路B] STATUS=${status} 已送达主会话 session=${sid.slice(0, 12)}…\n`)
+    append(`${stamp()}  [线路B] STATUS=${effective} 已送达主会话 session=${sid.slice(0, 12)}…\n`)
   }
 
   /** Gate B: runs when the PMO child's turn closes. */
   function onChildTurnEnd(sid: any, childId: any, event: any) {
-    const report = redact(childReports.get(childId) ?? '')
+    const captured = redact(childReports.get(childId) ?? '')
+    const capturedStep = childReportStep.get(childId)
+    const lastStep = childStep.get(childId)
     childReports.delete(childId)
+    childReportStep.delete(childId)
+    childStep.delete(childId)
+    // A turn whose last step emitted no text must not be judged by an earlier
+    // step's STATUS: that verdict belongs to work the reviewer already handled
+    // (issue #6). Only judge when the capture is from the newest step, or when the
+    // host gave no step coordinates at all (older shapes / tests).
+    const stale = capturedStep !== undefined && lastStep !== undefined && capturedStep < lastStep
+    const report = stale ? '' : captured
     const reason = event?.data?.reason
     const kind = reason?.kind ?? '?'
     const wasReview = lastForwardReview.get(sid) === true
@@ -790,6 +916,9 @@ export function apply(ctx: any, config: any) {
     append(`${SEP}${stamp()}  [子代理报告] child=${String(childId).slice(0, 12)}… turn=${event?.data?.turn ?? '?'} reason=${JSON.stringify(reason ?? null)} ${wasReview ? '审查' : '签到/其他'}\n${clip(report) || '(无结束语)'}\n`)
     // Check-in acks and side conversations with the child stay on this side.
     if (!wasReview) return
+    if (stale) {
+      append(`${stamp()}  [子代理报告] 最后一步无文本，按「未按协议输出」处理（不沿用上一步的 STATUS）\n`)
+    }
     if (kind !== 'completed') {
       deliverVerdict(sid, childId, 'NEED_HUMAN', `审查官本轮未正常结束（${kind}），没有给出审查结论。${report ? '\n其最后输出：\n' + report : ''}`)
       return
@@ -807,10 +936,21 @@ export function apply(ctx: any, config: any) {
     const t = event.type
     if (t === 'turn/start') {
       childReports.delete(childId)
+      childReportStep.delete(childId)
+      childStep.delete(childId)
+    } else if (t === 'step/start') {
+      const step = Number(event.data?.step)
+      if (Number.isFinite(step)) childStep.set(childId, step)
     } else if (t === 'assistant/message') {
-      // Per-step event: the last non-empty text is the child's closing message.
+      // Per-step event: keep the newest non-empty text AND the step it came from,
+      // so turn/end can tell "the closing step spoke" from "an earlier step did".
       const text = textOf(event.data)
-      if (text) { childReports.set(childId, text); saveState() }
+      if (text) {
+        childReports.set(childId, text)
+        const step = Number(event.data?.step ?? childStep.get(childId))
+        if (Number.isFinite(step)) childReportStep.set(childId, step)
+        saveState()
+      }
     } else if (t === 'turn/end') {
       onChildTurnEnd(sid, childId, event)
     }
@@ -967,32 +1107,42 @@ export function apply(ctx: any, config: any) {
       // silently emptied this route before 0.12.1.
       const llm = ctx.get('llm')
       if (!llm || typeof llm.listProviders !== 'function') return json({ ok: false, error: 'llm 服务不可用' }, 400)
-      const out: any[] = []
+      // One adapter round trip per provider, all at once: sequential awaits made the
+      // first paint scale with the provider count (issue #10). A provider whose
+      // catalog fails is still skipped, exactly as before.
       const providers = await llm.listProviders()
-      for (const p of Array.isArray(providers) ? providers : []) {
+      const rows = await Promise.all((Array.isArray(providers) ? providers : []).map(async (p: any) => {
         const id = typeof p === 'string' ? p : (p && p.id)
-        if (!id) continue
+        if (!id) return null
         const name = typeof p === 'string' ? p : ((p && p.name) || id)
         try {
           const models = await llm.listModels(id)
-          if (Array.isArray(models)) {
-            out.push({
-              provider: id,
-              name,
-              models: models.map((m: any) => ({
-                id: m.id ?? m.model ?? '',
-                name: m.name ?? m.label ?? m.id ?? m.model ?? '',
-              })),
-            })
+          if (!Array.isArray(models)) return null
+          return {
+            provider: id,
+            name,
+            models: models.map((m: any) => ({
+              id: m.id ?? m.model ?? '',
+              name: m.name ?? m.label ?? m.id ?? m.model ?? '',
+            })),
           }
-        } catch { /* catalog-less provider: skip */ }
-      }
-      return json({ ok: true, providers: out })
+        } catch { return null /* catalog-less provider: skip */ }
+      }))
+      return json({ ok: true, providers: rows.filter((row: any) => row !== null) })
     }
     if (request.method === 'GET' && rest === '/providers') {
       const subagents = ctx.get('subagents')
-      const list = subagents && typeof subagents.list === 'function' ? subagents.list() : []
-      return json({ ok: true, providers: Array.isArray(list) ? list : [] })
+      // `list()` is gone on some hosts (DSH 0.2.2-rc.2): fall back to probing the
+      // names this plugin can actually use instead of handing the UI an empty list
+      // (or letting it invent `spawn`/`fork`) — issue #8.
+      let list = subagents && typeof subagents.list === 'function' ? subagents.list() : []
+      if (!Array.isArray(list)) list = []
+      if (list.length === 0 && subagents && typeof subagents.getProvider === 'function') {
+        list = ['spawn', 'fork', 'local'].filter((name) => {
+          try { return subagents.getProvider(name) !== undefined } catch { return false }
+        })
+      }
+      return json({ ok: true, providers: list })
     }
     if (request.method === 'GET' && rest === '/session-config') {
       const sid = url.searchParams.get('session') ?? 'unknown'
@@ -1077,7 +1227,7 @@ export function apply(ctx: any, config: any) {
           }
         }
       }
-      saveState()
+      saveState({ immediate: true })
       return json({ ok: true, sessionId: sid, override: cur, effective: after, reasoning, reset, effortAdjusted })
     }
     if (rest === '/toggle') {
@@ -1117,6 +1267,7 @@ export function apply(ctx: any, config: any) {
         stopped.delete(sid)
         doneSet.delete(sid)
         rounds.delete(sid)
+        capReached.delete(sid)
         lastForwardReview.delete(sid)
         forwardAllowed.delete(sid)
       } else {
@@ -1128,10 +1279,11 @@ export function apply(ctx: any, config: any) {
         doneSet.delete(sid)
         stopped.delete(sid)
         rounds.delete(sid)
+        capReached.delete(sid)
         lastForwardReview.delete(sid)
         append(`${stamp()}  [PMO 暂停] session=${sid.slice(0, 12)}… 停转发、解除闸门，审查官与记忆保留\n`)
       }
-      saveState()
+      saveState({ immediate: true })
       append(`${SEP}${stamp()}  [PMO ${on ? '启动' : '停止'}] session=${sid.slice(0, 12)}…\n`)
       // P1-7: toggle only arms the session; the child is created on the first
       // forward (ensureChildAndGreet runs there).
