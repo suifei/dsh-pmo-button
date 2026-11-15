@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "skipLibCheck": true,
+    "composite": true,
+    "declaration": true,
+    "rootDir": "src",
+    "outDir": "lib",
+    "allowJs": false,
+    "esModuleInterop": true,
+    "types": ["node"],
+    "paths": {
+      "@deepseek-ai/dsh-typert-protocol": ["../../packages/typert-protocol/src/index.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}
