@@ -259,6 +259,7 @@ dsh --profile <your-profile> --dump-config   # verify the plugin tree
 
 ## 📌 Versions
 
+- **0.13.3** — DSH 0.2.2-rc.3 compatibility: `startActivation` now reads `parent`/`prompt`/`agentOptions` from the top-level spec (the legacy `request` object is still sent); the verdict node claims the message exclusively again and falls back to a session-level location, so a verdict renders exactly once and stays visible.
 - **0.13.0** — breaking upgrade (requires DSH `>=0.2.2-rc.1 <0.3.0`): state moves from `pmo-state.json` into the `pmo_button` storage domain (migrated automatically on first start; the old file is renamed `*.migrated`); the reviewer is created **on the first forward** (lighting up only sets `enabled`); dimming pauses forwarding and releases the gates while keeping the reviewer and its memory, and re-lighting resumes; review verdicts render as a dedicated Chat node titled `PMO 审查 · STATUS=…`; UI copy uses the Client locale service (zh/en); `client.ts` drops `@ts-nocheck` and compiles under strict.
 - **0.12.3** — docs-only: bilingual README (Chinese default + English), two UI screenshots, the global config path and the "heterogeneous model + max effort" recommendation; no code/behavior changes, same functionality as 0.12.2.
 - **0.12.2** — the per-session menu and the global config panel share one effort selector: both list only the model capabilities from `llm.resolveModelInfo()`; an empty model can only inherit (no more hardcoded `minimal/low/medium/high/max`); saving clears an effort the model does not support.

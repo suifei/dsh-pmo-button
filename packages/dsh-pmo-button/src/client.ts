@@ -50,6 +50,12 @@ declare global {
     __PMO_REMOTE_DISPOSE__?: any
     __PMO_REMOTE_MOUNT_ERROR__?: any
     __PMO_SET_LOCALE__?: any
+    __PMO_NODE_REG__?: any
+    __PMO_NODE_MATCH__?: any
+    __PMO_NODE_MATCH_LAST__?: any
+    __PMO_NODE_BUILD__?: any
+    __PMO_NODE_VIEWS__?: any
+    __PMO_NODE_ERR__?: any
   }
 }
 
@@ -81,10 +87,12 @@ window.__ModuleLoader__.load({
         kind: 'pmo-review',
         target: 'chat',
         match(event: any) {
+          window.__PMO_NODE_MATCH__ = (window.__PMO_NODE_MATCH__ || 0) + 1;
           if (event?.type !== 'user/message') return null;
           const d = event.data ?? {};
           const source = (d.message && d.message.source) || d.source;
           if (!source || source.kind !== REVIEW_SOURCE) return null;
+          window.__PMO_NODE_MATCH_LAST__ = event.seq;
           // Claim the message exclusively: this Definition owns the verdict's
           // rendering, and the generic user bubble must not duplicate it.
           return { id: 'pmo-review:' + event.seq, role: 'start', exclusive: true };
@@ -100,6 +108,7 @@ window.__ModuleLoader__.load({
         buildViewNode(context: any) {
           // Once a target node is published it must keep returning one; a
           // temporary absence uses visibility, never null (contract).
+          window.__PMO_NODE_BUILD__ = (window.__PMO_NODE_BUILD__ || 0) + 1;
           if (!context) return null;
           const state = context.state ?? { title: 'PMO 审查 · STATUS=UNKNOWN', status: 'UNKNOWN', summary: '' };
           const anchor = context.start && context.start.event && typeof context.start.event.seq === 'number'
@@ -127,6 +136,7 @@ window.__ModuleLoader__.load({
 
     /** Compact node body: title + status line, no expand control. */
     function PmoReviewNodeView(props: ChatNodeViewProps<'pmo-review'>) {
+      window.__PMO_NODE_VIEWS__ = (window.__PMO_NODE_VIEWS__ || 0) + 1;
       const data = props.node.data;
       return h('div', { className: 'pmo-review-node' },
         h('div', { className: 'pmo-review-title' }, data.title),
@@ -134,7 +144,7 @@ window.__ModuleLoader__.load({
     }
 
     const BASE = '/pmo-button';
-    const VER = 'v0.13.2';
+    const VER = 'v0.13.3';
     /** Effort choices from the model's DSH reasoning catalog. No hardcoded
      *  minimal/low/... fallback: without a concrete model the only honest
      *  choice is inherit. Both the session menu and the config panel use this
@@ -896,7 +906,15 @@ window.__ModuleLoader__.load({
             window.__PMO_SET_LOCALE__ = function (id: any) { localeSvc.setLocale(id); };
           }
           if (c.uiConversation && c.uiConversation.events && typeof c.uiConversation.events.register === 'function') {
-            c.uiConversation.events.register(pmoReviewDefinition());
+            try {
+              c.uiConversation.events.register(pmoReviewDefinition());
+              window.__PMO_NODE_REG__ = { ok: true };
+            } catch (err: any) {
+              window.__PMO_NODE_REG__ = { ok: false, error: String(err && err.message || err) };
+              window.__PMO_NODE_ERR__ = String(err && err.stack || err);
+            }
+          } else {
+            window.__PMO_NODE_REG__ = { ok: false, error: 'uiConversation.events.register missing' };
           }
           c.slots.inject('plugins.bundle.config', function () {            return c.slots.register(
               { name: 'plugins.bundle.config', key: BUNDLE_NAME, locale: 'pmoButton' },

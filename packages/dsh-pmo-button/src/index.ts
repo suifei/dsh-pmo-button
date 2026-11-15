@@ -50,7 +50,7 @@ export { PmoService } from './service.js'
 export const name = 'dsh-pmo-button'
 /** Host-half version, logged on activation so an operator can tell which build
  *  the running Host actually imported (hot reload vs stale module). */
-const HOST_VERSION = '0.13.2'
+const HOST_VERSION = '0.13.3'
 
 /** The identity prompt; delivered once per session and re-delivered only when its text changes. */
 const ROLE_PROMPT_DEFAULT = [
@@ -844,10 +844,15 @@ export function apply(ctx: any, config: any) {
     const request: any = { parent: agent, prompt: promptBlocks, description: cfg.childLabel }
     if (Object.keys(agentOptions).length > 0) request.agentOptions = agentOptions
     const act = await subagents.startActivation({
+      // rc.3 reads parent/prompt/agentOptions from the top-level spec; rc.1 read
+      // them from request. Send both so either host accepts the activation.
+      parent: agent,
       provider: cfg.provider,
       label: cfg.childLabel,
       delivery: 'caller',
       signal: controller.signal,
+      prompt: promptBlocks,
+      ...Object.keys(agentOptions).length > 0 ? { agentOptions } : {},
       request,
     })
     children.set(sid, String(act.childId))

@@ -258,6 +258,7 @@ dsh --profile <你的profile> --dump-config   # 验证插件树
 
 ## 📌 版本
 
+- **0.13.3** — 兼容 DSH 0.2.2-rc.3：`startActivation` 从顶层 `parent`/`prompt`/`agentOptions` 读取（同时保留 `request` 以兼容旧宿主）；审查意见节点恢复 `exclusive` 认领并改用 session 级位置回退，保证 verdict 只渲染一次且可见。
 - **0.13.0** — 破坏性升级（需 DSH `>=0.2.2-rc.1 <0.3.0`）：状态从 `pmo-state.json` 迁入 storage domain `pmo_button`（首次启动自动迁移，旧文件重命名为 `*.migrated`）；审查官改为**首次转发才创建**（点亮只置 `enabled`）；熄灭=暂停转发并解除闸门，审查官与记忆保留，再点亮继续；审查意见以专用 Chat 节点呈现（标题 `PMO 审查 · STATUS=…`）；UI 文案走 Client locale（中文/英文）；`client.ts` 移除 `@ts-nocheck` 并通过 strict 编译。
 - **0.12.3** — 文档版：双语 README（默认中文 + English）、两张界面截图、全局配置路径与“异构模型 + 思考拉满”建议；无代码/行为变更，功能与 0.12.2 相同。
 - **0.12.2** — 会话级菜单与全局配置面板统一为同一份 effort 选择器：两者都只按 `llm.resolveModelInfo()` 的模型能力列项；模型留空时只能继承（不再出现硬编码 `minimal/low/medium/high/max`）；保存时清掉与模型不匹配的 effort。
