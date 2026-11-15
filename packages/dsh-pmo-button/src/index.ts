@@ -1313,7 +1313,19 @@ export function apply(ctx: any, config: any) {
       return callRoute(`/pmo-button/session-config/set?${q.toString()}`)
     },
     models: () => callRoute('/pmo-button/models'),
-    providers: () => ({ providers: (ctx.get('subagents')?.list?.() ?? []) as string[] }),
+    providers: () => {
+      // Same probe as the /providers route: `list()` is gone on DSH 0.2.2-rc.2, and
+      // the menu must not receive an empty list (issue #8).
+      const subagents: any = ctx.get('subagents')
+      let list: string[] = typeof subagents?.list === 'function' ? (subagents.list() ?? []) : []
+      if (!Array.isArray(list)) list = []
+      if (list.length === 0 && typeof subagents?.getProvider === 'function') {
+        list = ['spawn', 'fork', 'local'].filter((name) => {
+          try { return subagents.getProvider(name) !== undefined } catch { return false }
+        })
+      }
+      return { providers: list }
+    },
   }
   if (typeof ctx.plugin === 'function') ctx.plugin(PmoService, backend)
   // Test-harness hook: the fake Context used by review-gate.test.mjs has no
