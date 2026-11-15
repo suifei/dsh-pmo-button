@@ -50,7 +50,7 @@ export { PmoService } from './service.js'
 export const name = 'dsh-pmo-button'
 /** Host-half version, logged on activation so an operator can tell which build
  *  the running Host actually imported (hot reload vs stale module). */
-const HOST_VERSION = '0.13.1'
+const HOST_VERSION = '0.13.2'
 
 /** The identity prompt; delivered once per session and re-delivered only when its text changes. */
 const ROLE_PROMPT_DEFAULT = [
@@ -607,6 +607,21 @@ export function apply(ctx: any, config: any) {
     const dropped = gateDrops.get(sid) ?? 0
     gateDrops.delete(sid)
     if (dropped > 0 && (!b || (b.tasks.length === 0 && b.texts.length === 0))) return
+    // A buffer belongs to exactly one turn. After a hot reload or upgrade that
+    // lands mid-turn, hydrateDoc restores the previous turn's buffer and no
+    // `turn/start` fires to rebuild it — forwarding it would review the new reply
+    // against last turn's instructions (observed 2026-11-15: turn 118's user text
+    // was sent as turn 119's block). An unidentifiable buffer is treated the same:
+    // we cannot vouch for it, so it is dropped rather than mixed.
+    const eventTurn = Number(event?.data?.turn)
+    const bufferTurn = Number(b?.turn)
+    const hasContent = Boolean(b && (b.tasks.length > 0 || b.texts.length > 0))
+    if (hasContent && Number.isFinite(eventTurn) && (!Number.isFinite(bufferTurn) || bufferTurn !== eventTurn)) {
+      append(`${stamp()}  [轮次转发] 丢弃陈旧缓冲 turn=${Number.isFinite(bufferTurn) ? bufferTurn : '?'}≠${eventTurn}（跨轮/跨重载，不混用旧内容）\n`)
+      buffers.set(sid, emptyBuffer())
+      saveState({ immediate: true })
+      return
+    }
     const turn = event?.data?.turn ?? b?.turn ?? '?'
     const reason = JSON.stringify(event?.data?.reason ?? event?.data ?? null)
     const lines = [`${SEP}${stamp()}  [轮次结束] session=${sid.slice(0, 12)}… turn=${turn} reason=${reason}`]
@@ -1002,6 +1017,14 @@ export function apply(ctx: any, config: any) {
       const t = event.type
       if (t === 'turn/start') {
         const b = bufferFor(sid)
+        // A new turn owns a fresh buffer. If the previous one still holds content
+        // from another turn (restored by hydrateDoc after a reload, or a turn that
+        // never closed), say so instead of dropping it silently.
+        const prevTurn = Number(b.turn)
+        const nextTurn = Number(event.data?.turn)
+        if ((b.tasks.length > 0 || b.texts.length > 0) && Number.isFinite(prevTurn) && Number.isFinite(nextTurn) && prevTurn !== nextTurn) {
+          append(`${stamp()}  [轮次转发] 丢弃陈旧缓冲 turn=${prevTurn}≠${nextTurn}（新一轮开始，旧内容不跨轮）\n`)
+        }
         b.tasks = []
         b.texts = []
         b.usage = { input: 0, output: 0 }
