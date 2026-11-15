@@ -115,7 +115,17 @@ window.__ModuleLoader__.load({
             ? context.start.event.seq
             : 0;
           const resolved = context.start && context.start.location;
-          const location = resolved && resolved.kind !== 'unresolved' ? resolved : { kind: 'session' };
+          let location = resolved && resolved.kind !== 'unresolved' ? resolved : null;
+          if (!location) {
+            // A followup user message can arrive outside a resolved step; place it
+            // in its turn instead of an unresolved (hidden) row. Only `turn.turn`
+            // participates in placement; the data store is unused by this node.
+            const event = (context.start && context.start.event) || (context.matches && context.matches[0] && context.matches[0].event);
+            const turnNo = Number(event && event.data && event.data.turn);
+            location = Number.isFinite(turnNo)
+              ? { kind: 'turn', turn: { turn: turnNo, start: undefined, end: undefined, status: 'unknown', steps: [], data: {} } }
+              : { kind: 'session' };
+          }
           return {
             key: context.key,
             kind: 'pmo-review',

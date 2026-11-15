@@ -1,0 +1,35 @@
+{
+  "format": 1,
+  "title": {
+    "en": "suifei DSH plugins",
+    "zh": "suifei DSH 插件"
+  },
+  "plugins": [
+    {
+      "name": "@suifei/dsh-pmo-button",
+      "title": {
+        "en": "PMO Review Loop Button",
+        "zh": "PMO 审查循环按钮"
+      },
+      "description": {
+        "en": "A persistent reviewer subagent beside the composer that reviews every turn and drives the loop with STATUS: CONTINUE | DONE | NEED_HUMAN.",
+        "zh": "输入框旁的常驻 PMO 审查官：每轮工作自动审查，用 STATUS: CONTINUE | DONE | NEED_HUMAN 把会话循环推进到底。"
+      },
+      "icon": "icons/pmo-button.svg",
+      "author": "suifei",
+      "homepage": "https://github.com/suifei/dsh-pmo-button#readme",
+      "repository": {
+        "url": "https://github.com/suifei/dsh-pmo-button",
+        "directory": "packages/dsh-pmo-button"
+      },
+      "versions": [
+        {
+          "version": "0.13.3",
+          "publishTimestamp": 1794749400,
+          "source": { "type": "npm" },
+          "engines": { "dsh": ">=0.2.2-rc.1 <0.3.0" }
+        }
+      ]
+    }
+  ]
+}
